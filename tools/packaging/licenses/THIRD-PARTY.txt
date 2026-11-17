@@ -1,0 +1,50 @@
+REFLORA Alpha: componentes de terceiros e licenças
+=====================================================
+
+O REFLORA (o launcher, o preparador, o recompilador e o runtime) é distribuído sob a licença MIT (LICENSE, na raiz).
+O REFLORA não contém nenhum arquivo do jogo, código do jogo, chave, firmware nem fonte do console.
+
+1. Dentro deste pacote
+----------------------
+REFLORA.exe (o launcher)
+  - Tauri 2 e as bibliotecas Rust compiladas nele: a lista com a licença de cada uma e os arquivos de licença estão em
+    launcher-crates/ (CRATES.txt). São MIT, Apache-2.0, BSD, Zlib, Unicode-3.0, Unlicense, 0BSD, CC0/MIT-0 e, em cinco
+    bibliotecas sem modificação (cssparser, cssparser-macros, selectors, dtoa-short, option-ext), MPL-2.0; o código-fonte
+    delas está em https://crates.io (endereços em CRATES.txt).
+  - O carregador do WebView2 (webview2-com-sys, MIT), que usa o Microsoft Edge WebView2 Runtime já instalado no
+    Windows; o runtime não vai no pacote.
+  - Fontes Fredoka e Nunito: SIL Open Font License 1.1 (Fredoka-OFL.txt, Nunito-OFL.txt).
+
+components/python
+  Python 3.12 embutível (Python Software Foundation License; arquivos de bibliotecas inclusos: OpenSSL, libffi,
+  SQLite, bzip2, xz, zlib e o runtime do Visual C++ redistribuível da Microsoft, cada um sob sua licença), mais
+  capstone (BSD-3-Clause), zstandard (BSD-3-Clause) e lz4 (BSD-3-Clause). Os textos estão em components/python/
+  LICENSE.txt e components/python/licenses/.
+
+components/spirv_harness
+  O tradutor de shaders: o tradutor de shaders do Ryujinx/Ryubing (MIT), o .NET 10 (MIT) autocontido e as bibliotecas
+  NuGet que ele usa (Gommon, Humanizer, MsgPack e outras; avisos em NUGET-NOTICES.txt). Textos em
+  components/spirv_harness/licenses/.
+
+components/spirv-val
+  SPIRV-Tools e SPIRV-Headers (Apache-2.0 e MIT), compilados com o runtime do MinGW-w64 e o winpthreads (licenças
+  permissivas; COPYING) e o runtime do LLVM. Textos em components/spirv-val/licenses/.
+
+Código-fonte de terceiros compilado no computador de cada usuário
+  runtime/third_party/imgui (Dear ImGui, MIT: LICENSE.txt) e runtime/third_party/zstd (Zstandard, BSD: LICENSE).
+
+2. Baixado na primeira preparação (não vai no pacote)
+-----------------------------------------------------
+O preparador baixa, das páginas oficiais de cada projeto, as ferramentas de compilação fixadas por SHA-256, e as
+guarda na pasta da instalação. Cada uma traz as próprias licenças:
+  - llvm-mingw 20261020 (Apache-2.0 com exceção LLVM; mingw-w64: licenças ZPL e afins)
+  - CMake 4.4.4 (BSD-3-Clause)
+  - Ninja 1.13.2 (Apache-2.0)
+  - SDL3 3.4.18 (zlib); o SDL3.dll vai para bin\ da instalação com a licença em bin\licenses\
+  - Vulkan-Headers vulkan-sdk-1.4.363.0 (Apache-2.0 e MIT)
+
+3. O que vem do usuário
+-----------------------
+O NUP do jogo 040015100B514001 é do próprio usuário. Tudo o que o REFLORA gera a partir
+dele (código recompilado, shaders traduzidos, o executável do jogo, caches) fica só no computador do usuário e não deve
+ser compartilhado. A fonte dos botões do console, se usada, é importada pelo usuário do próprio console.

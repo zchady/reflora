@@ -1,0 +1,99 @@
+REFLORA — {ALPHA} (Windows x64)
+================================
+
+AVISO: VERSÃO ALPHA EXPERIMENTAL
+  Esta é uma versão de testes, para um grupo pequeno de testadores. Ela pode falhar, travar ou se comportar de forma
+  diferente em cada computador. Use por sua conta e guarde cópias dos seus saves (veja "Saves" abaixo).
+
+O que é
+  O REFLORA prepara o jogo 040015100B514001 para rodar no Windows a partir do NUP da SUA
+  cópia do jogo: ele recompila o código do jogo, traduz os shaders para Vulkan, compila o jogo e prepara os gráficos,
+  tudo no seu computador. O REFLORA não contém nem baixa nenhum arquivo do jogo, chave ou firmware.
+
+Você precisa fornecer o seu próprio NUP
+  O NUP do jogo 040015100B514001 (versão 1.2.1, com o add-on) tem de ser obtido
+  legalmente, da sua própria cópia. Não compartilhe o NUP nem nada que o REFLORA gerar a partir dele.
+
+Requisitos
+  - Windows 10 (versão 2004 ou mais nova) ou Windows 11, 64 bits.
+  - Processador com AVX2 (Intel de 4ª geração "Haswell" ou mais novo; AMD Ryzen, ou Excavator, ou mais novo).
+    O REFLORA confere isso antes de começar.
+  - Placa de vídeo com Vulkan 1.3 e driver atualizado.
+  - Microsoft Edge WebView2 Runtime (já vem no Windows 11 e no Windows 10 atualizado; se faltar, o REFLORA avisa e
+    diz onde baixar).
+  - Espaço livre: recomendamos 8 GB no disco da pasta de instalação (a instalação ocupa cerca de 5 GB).
+  - Memória RAM: ainda não validada por completo. estimamos 16 GB como mínimo.
+  - Internet na primeira preparação: o REFLORA baixa cerca de 250 MB de ferramentas de compilação (llvm-mingw,
+    CMake, Ninja, SDL3, Vulkan-Headers), dos sites oficiais, conferidas por SHA-256.
+  Não é preciso instalar Visual Studio, MSYS2, Python, .NET, Vulkan SDK nem outras ferramentas.
+
+Placas de vídeo
+  Até agora o REFLORA foi testado em poucos hardwares. Outras placas (NVIDIA, Intel, AMD) ainda
+  estão em testes: é justamente isso que esta Alpha quer descobrir.
+
+Instalação
+  1. Extraia o arquivo .rar numa pasta simples, por exemplo C:\REFLORA. Evite pastas sincronizadas (OneDrive) e
+     "Arquivos de Programas".
+  2. Abra REFLORA.exe. O Windows pode mostrar "O Windows protegeu o computador", porque o REFLORA não é assinado
+     digitalmente: confira com quem lhe enviou o arquivo que o SHA-256 bate (arquivo .sha256) e, se bater, use
+     "Mais informações" > "Executar assim mesmo".
+  3. Na página Instalação, escolha o seu NUP. O REFLORA confere se é o pacote certo, o processador e o espaço livre.
+  4. Se quiser, mude a pasta da instalação (o padrão é %LOCALAPPDATA%\app.reflora.launcher\workspace).
+  5. Clique em "Iniciar preparação". São 9 etapas e cerca de 20 a 30 minutos, usando bastante o processador:
+     conferência, extração, recompilação, tradução dos shaders, compilação do jogo (com o download das ferramentas),
+     configuração, teste e a Preparação gráfica (os pipelines Vulkan, compilados pelo driver da sua placa).
+     Pode parar quando quiser: "Continuar preparação" retoma de onde parou.
+  6. Quando terminar, clique em Jogar.
+  Opcional: os ícones dos botões do jogo usam uma fonte do console, que o REFLORA não traz. Se você tiver o arquivo
+  nintendo_ext_003.bfttf do seu próprio console, importe em Configurações.
+
+Engasgos (stuttering)
+  A Preparação gráfica compila antes de jogar os pipelines que já conhecemos: 2.687 desde a Alpha 02 (eram 1.231),
+  da introdução, do prólogo, das cenas no castelo, da primeira fase e de cerca de 50 minutos de jogo normal. No
+  que ainda não foi coletado (outros mundos, fases e chefes) o jogo ainda pode engasgar na primeira
+  vez que algo novo aparece. Não há garantia de 60 FPS constantes.
+
+Saves
+  Os saves ficam em <pasta da instalação>\data\user\save (Configurações > Saves > Abrir pasta).
+  ANTES de atualizar o REFLORA, mudar a pasta da instalação ou fazer qualquer manutenção, copie essa pasta para outro
+  lugar. As configurações do jogo ficam em <pasta da instalação>\data\settings.ini (menu F1 dentro do jogo).
+
+Novidades da Alpha 03 (em relação à Alpha 02)
+  - Placas de vídeo sem a extensão de "fragment shader interlock" agora criam os pipelines: os shaders não pedem mais
+    o que não usam. O dispositivo Vulkan também liga os recursos do Vulkan 1.1/1.2 que a placa tiver.
+  - Profundidade correta em placas sem "depth clip control" (os shaders de vértice ajustam o z).
+  - O RomFS: uma pasta extract\romfs vazia não passa mais na frente do NUP (o jogo deixava de ler os arquivos).
+  - Para quem testa: um modo de GPU assíncrono experimental (NX_ASYNC_GPU) com correções, que continua DESLIGADO por
+    padrão porque ainda mostra defeitos visuais. Nada muda no jogo se você não o ativar.
+  - O catálogo de pipelines é o mesmo da Alpha 02 (2.687).
+
+Novidades da Alpha 02 (em relação à Alpha 01)
+  - Catálogo de pipelines de 1.231 para 2.687: menos engasgos de primeira compilação no que já foi jogado.
+  - A preparação dos pipelines em segundo plano, logo ao abrir o jogo, não disputa mais com a imagem: antes podia
+    derrubar a primeira cena para uns 47 FPS na primeira abertura depois de uma preparação.
+  - Registros mais completos de áudio e de engasgos (útil nos relatos de problemas).
+  - A Preparação gráfica demora um pouco mais (o dobro de pipelines): cerca de 20 segundos numa placa rápida sem nada no
+    cache do driver; numa placa mais lenta pode levar alguns minutos. Acontece uma vez por versão e por driver.
+
+Atualizar o REFLORA
+  Vindo da Alpha 01 ou 02: siga os passos abaixo. A atualização recompila o jogo com o runtime novo e refaz a Preparação
+  gráfica com o catálogo novo; a extração, a recompilação e os shaders ficam como estão.
+  1. Copie seus saves (acima).
+  2. Extraia a nova versão numa pasta nova e abra o REFLORA.exe dela. Ele usa a mesma pasta de instalação.
+  3. Em Instalação, clique em "Verificar e atualizar": ele confere tudo e refaz só o que mudou (normalmente alguns
+     minutos), incluindo a Preparação gráfica. Saves e configurações são mantidos.
+
+Registros (logs) e como relatar problemas
+  - Preparação: Instalação > "Abrir registro" (<pasta da instalação>\work\reflora-prepare.log).
+  - Jogo: <pasta da instalação>\nx.log (e nx.log.prev, da vez anterior).
+  - Preparação gráfica: <pasta da instalação>\work\graphics.log e work\graphics.json.
+  Ao relatar, diga: processador, placa de vídeo e versão do driver, memória RAM, versão do Windows, o que aconteceu e
+  em que ponto, e anexe os registros acima. Os registros podem conter o caminho das suas pastas (com o seu nome de
+  usuário do Windows): apague essa parte se preferir.
+  NÃO envie: o NUP, dumps ou arquivos extraídos do jogo, a fonte do console, saves, chaves, nem as pastas bin, data ou
+  work da instalação. Não pedimos nenhum dado pessoal.
+  O REFLORA não envia nada pela internet por conta própria: nenhum registro sai do seu computador sem você enviar.
+
+Licenças
+  REFLORA: licença MIT (LICENSE). Componentes de terceiros e seus avisos: pasta licenses (THIRD-PARTY.txt).
+  O REFLORA não é afiliado ao dono do jogo nem do console.

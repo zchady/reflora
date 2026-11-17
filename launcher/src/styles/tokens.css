@@ -1,0 +1,83 @@
+/* REFLORA design tokens. Colours are taken from the approved art (launcher/art/): the logo's cyan -> lilac -> pink
+   letters, its dark navy outline and backdrop, the gold sparkle, and the scene's sky, leaves and hydrangeas. */
+
+@font-face {
+  font-family: "Fredoka";
+  src: url("../fonts/Fredoka-Variable.ttf") format("truetype");
+  font-weight: 300 700;
+  font-stretch: 75% 125%;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Nunito";
+  src: url("../fonts/Nunito-Variable.ttf") format("truetype");
+  font-weight: 200 1000;
+  font-display: block;
+}
+
+:root {
+  /* ink: the logo's outline and backdrop */
+  --ink-950: #020b32;
+  --ink-900: #0a1040;
+  --ink-800: #141a4e;
+  --ink-700: #232a6c;
+  --ink-500: #4a5290;
+  --ink-400: #6b73ad;
+  --outline: #1a1f4e;
+
+  /* the letters */
+  --cyan-300: #8be7ff;
+  --cyan-400: #3fd4ff;
+  --sky-500: #2b9bff;
+  --lilac-400: #a98cff;
+  --pink-400: #ff6fcf;
+  --pink-500: #ff3fb8;
+  --magenta-600: #d81f97;
+  --gold-400: #ffc53d;
+
+  /* the scene */
+  --sky-100: #e8f4ff;
+  --leaf-500: #5dc942;
+  --leaf-600: #3fa82c;
+  --petal-200: #f4dcff;
+
+  /* status */
+  --ok: #23b26d;
+  --warn: #f2a516;
+  --danger: #e5384f;
+
+  --brand-gradient: linear-gradient(180deg, #4bdcff 0%, #79b9ff 38%, #c37cff 62%, #ff4fc0 100%);
+  --brand-gradient-x: linear-gradient(90deg, #3fd4ff 0%, #8f9dff 50%, #ff4fc0 100%);
+
+  /* surfaces */
+  --glass-light: rgba(255, 255, 255, 0.8);
+  --glass-light-strong: rgba(255, 255, 255, 0.9);
+  --glass-light-border: rgba(255, 255, 255, 0.95);
+  --glass-dark: rgba(10, 16, 64, 0.7);
+  --glass-dark-border: rgba(255, 255, 255, 0.14);
+  --text-strong: #121845;
+  --text: #2c3468;
+  --text-muted: #5b6396;
+  --text-on-dark: #eef3ff;
+  --text-on-dark-muted: #aab4e6;
+
+  --font-display: "Fredoka", "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  --font-body: "Nunito", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Mono", "Consolas", monospace;
+
+  --radius-s: 10px;
+  --radius-m: 16px;
+  --radius-l: 24px;
+  --radius-pill: 999px;
+
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 12px 32px rgba(18, 28, 92, 0.18),
+    0 2px 6px rgba(18, 28, 92, 0.08);
+  --shadow-depth: 0 6px 0 var(--outline);
+
+  --sidebar-width: 248px;
+  --frame-gap: 14px;
+  --titlebar-height: 44px;
+
+  --ease: cubic-bezier(0.22, 0.8, 0.26, 1);
+}

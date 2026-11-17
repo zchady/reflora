@@ -1,0 +1,165 @@
+STEP 1/8 verify
+LOG package 0: program 040015100B514001, build 1.2.1
+LOG add-on content linked to the program: found
+PROGRESS 12
+STEP 2/8 extract
+LOG ExeFS -> C:\Reflora\workspace\work\exefs (SHA-256 checked)
+PROGRESS 25
+STEP 3/8 bins
+LOG main: flat image written
+LOG sdk: flat image written
+LOG subsdk0: flat image written
+PROGRESS 37
+STEP 4/8 recompile
+LOG recompiling main
+PROGRESS 33
+LOG recompiling sdk
+PROGRESS 66
+LOG recompiling subsdk0
+PROGRESS 100
+STEP 5/8 shaders
+LOG scanning the package for Switch 2 shaders
+PROGRESS 0
+PROGRESS 3
+PROGRESS 6
+PROGRESS 9
+PROGRESS 12
+GROUP 1/21 effect_Demo01 extract done: 4 stages
+GROUP 1/21 effect_Demo01 lower done: 12 lowered, 0 unsupported
+GROUP 1/21 effect_Demo01 translate done: 12 ok, 0 failed
+PROGRESS 15
+GROUP 2/21 effect_Demo02 extract done: 4 stages
+GROUP 2/21 effect_Demo02 lower done: 24 lowered, 0 unsupported
+GROUP 2/21 effect_Demo02 translate done: 24 ok, 0 failed
+PROGRESS 19
+GROUP 3/21 effect_Demo03 extract done: 4 stages
+GROUP 3/21 effect_Demo03 lower done: 36 lowered, 0 unsupported
+GROUP 3/21 effect_Demo03 translate done: 36 ok, 0 failed
+PROGRESS 23
+GROUP 4/21 effect_Demo04 extract done: 4 stages
+GROUP 4/21 effect_Demo04 lower done: 48 lowered, 1 unsupported
+GROUP 4/21 effect_Demo04 translate done: 48 ok, 0 failed
+PROGRESS 27
+GROUP 5/21 effect_Demo05 extract done: 4 stages
+GROUP 5/21 effect_Demo05 lower done: 60 lowered, 0 unsupported
+GROUP 5/21 effect_Demo05 translate done: 60 ok, 0 failed
+PROGRESS 31
+GROUP 6/21 effect_Demo06 extract done: 4 stages
+GROUP 6/21 effect_Demo06 lower done: 72 lowered, 0 unsupported
+GROUP 6/21 effect_Demo06 translate done: 72 ok, 0 failed
+PROGRESS 35
+GROUP 7/21 effect_Demo07 extract done: 4 stages
+GROUP 7/21 effect_Demo07 lower done: 84 lowered, 0 unsupported
+GROUP 7/21 effect_Demo07 translate done: 84 ok, 0 failed
+PROGRESS 39
+GROUP 8/21 effect_Demo08 extract done: 4 stages
+GROUP 8/21 effect_Demo08 lower done: 96 lowered, 1 unsupported
+GROUP 8/21 effect_Demo08 translate done: 96 ok, 0 failed
+PROGRESS 43
+GROUP 9/21 layout_Demo01 extract done: 4 stages
+GROUP 9/21 layout_Demo01 lower done: 108 lowered, 0 unsupported
+GROUP 9/21 layout_Demo01 translate done: 108 ok, 0 failed
+PROGRESS 47
+GROUP 10/21 layout_Demo02 extract done: 4 stages
+GROUP 10/21 layout_Demo02 lower done: 120 lowered, 0 unsupported
+GROUP 10/21 layout_Demo02 translate done: 120 ok, 0 failed
+PROGRESS 51
+GROUP 11/21 layout_Demo03 extract done: 4 stages
+GROUP 11/21 layout_Demo03 lower done: 132 lowered, 0 unsupported
+GROUP 11/21 layout_Demo03 translate done: 132 ok, 0 failed
+PROGRESS 55
+GROUP 12/21 layout_Demo04 extract done: 4 stages
+GROUP 12/21 layout_Demo04 lower done: 144 lowered, 1 unsupported
+GROUP 12/21 layout_Demo04 translate done: 144 ok, 0 failed
+PROGRESS 59
+GROUP 13/21 layout_Demo05 extract done: 4 stages
+GROUP 13/21 layout_Demo05 lower done: 156 lowered, 0 unsupported
+GROUP 13/21 layout_Demo05 translate done: 156 ok, 0 failed
+PROGRESS 63
+GROUP 14/21 layout_Demo06 extract done: 4 stages
+GROUP 14/21 layout_Demo06 lower done: 168 lowered, 0 unsupported
+GROUP 14/21 layout_Demo06 translate done: 168 ok, 0 failed
+PROGRESS 67
+GROUP 15/21 lib_Demo01 extract done: 4 stages
+GROUP 15/21 lib_Demo01 lower done: 180 lowered, 0 unsupported
+GROUP 15/21 lib_Demo01 translate done: 180 ok, 0 failed
+PROGRESS 71
+GROUP 16/21 lib_Demo02 extract done: 4 stages
+GROUP 16/21 lib_Demo02 lower done: 192 lowered, 1 unsupported
+GROUP 16/21 lib_Demo02 translate done: 192 ok, 0 failed
+PROGRESS 75
+GROUP 17/21 lib_Demo03 extract done: 4 stages
+GROUP 17/21 lib_Demo03 lower done: 204 lowered, 0 unsupported
+GROUP 17/21 lib_Demo03 translate done: 204 ok, 0 failed
+PROGRESS 79
+GROUP 18/21 shader_Demo01 extract done: 4 stages
+GROUP 18/21 shader_Demo01 lower done: 216 lowered, 0 unsupported
+GROUP 18/21 shader_Demo01 translate done: 216 ok, 0 failed
+PROGRESS 83
+GROUP 19/21 shader_Demo02 extract done: 4 stages
+GROUP 19/21 shader_Demo02 lower done: 228 lowered, 0 unsupported
+GROUP 19/21 shader_Demo02 translate done: 228 ok, 0 failed
+PROGRESS 87
+GROUP 20/21 shader_Demo03 extract done: 4 stages
+GROUP 20/21 shader_Demo03 lower done: 240 lowered, 1 unsupported
+GROUP 20/21 shader_Demo03 translate done: 240 ok, 0 failed
+PROGRESS 91
+GROUP 21/21 exefs_main extract done: 4 stages
+GROUP 21/21 exefs_main lower done: 252 lowered, 0 unsupported
+GROUP 21/21 exefs_main translate done: 252 ok, 0 failed
+PROGRESS 95
+WARN shader coverage is not complete: 5 blocks not lowered, 0 not translated (see the shaders report)
+PROGRESS 100
+STEP 6/8 build
+LOG llvm-mingw: verified and extracted
+LOG cmake: verified and extracted
+LOG ninja: verified and extracted
+LOG sdl3: verified and extracted
+LOG vulkan-headers: verified and extracted
+LOG build: 1080 recompiled files; 5 jobs
+LOG build: compiling (the first time: about 6 minutes with 8 jobs on a 6-core CPU)
+PROGRESS 0
+LOG [0/1190] Building CXX object game_main
+PROGRESS 5
+LOG [70/1190] Building CXX object game_main
+PROGRESS 11
+LOG [140/1190] Building CXX object game_main
+PROGRESS 17
+LOG [210/1190] Building CXX object game_main
+PROGRESS 23
+LOG [280/1190] Building CXX object game_main
+PROGRESS 29
+LOG [350/1190] Building CXX object game_main
+PROGRESS 35
+LOG [420/1190] Building CXX object game_main
+PROGRESS 41
+LOG [490/1190] Building CXX object game_main
+PROGRESS 47
+LOG [560/1190] Building CXX object game_main
+PROGRESS 52
+LOG [630/1190] Building CXX object game_main
+PROGRESS 58
+LOG [700/1190] Building CXX object game_main
+PROGRESS 64
+LOG [770/1190] Building CXX object game_main
+PROGRESS 70
+LOG [840/1190] Building CXX object game_main
+PROGRESS 76
+LOG [910/1190] Building CXX object game_main
+PROGRESS 82
+LOG [980/1190] Building CXX object game_main
+PROGRESS 88
+LOG [1050/1190] Building CXX object game_main
+PROGRESS 94
+LOG [1120/1190] Building CXX object game_main
+PROGRESS 100
+LOG [1190/1190] Building CXX object game_main
+PROGRESS 100
+LOG imports: KERNEL32.dll, SDL3.dll, USER32.dll, ...
+LOG executable: C:\Reflora\workspace\bin\wonder2.exe
+STEP 7/8 config
+PROGRESS 87
+STEP 8/8 check
+LOG check: ran 45 s; shader records ['17245']; missing shaders 0; errors 0; title frame saved
+PROGRESS 100
+DONE

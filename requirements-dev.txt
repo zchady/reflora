@@ -1,0 +1,4 @@
+# Development and tests (pytest tests). Optional analysis tools also use Pillow and fonttools.
+# unicorn (GPL-2.0) is used only by two optional differential tests (tests/difftest.py, tools/nvn_device_info.py) and is not needed otherwise.
+-r requirements.txt
+pytest==9.2.0

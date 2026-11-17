@@ -1,0 +1,4 @@
+# Needed to prepare the game from your own files (tools/prepare_switch2.py). BSD-licensed.
+capstone==5.0.7
+lz4==4.4.5
+zstandard==0.25.0

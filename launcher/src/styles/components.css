@@ -1,0 +1,486 @@
+/* ---- cards ------------------------------------------------------------------------------------------------------ */
+.card {
+  position: relative;
+  background: var(--glass-light);
+  border: 1px solid var(--glass-light-border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(22px) saturate(150%);
+  padding: 22px 24px;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 19px;
+}
+
+.card-title .badge-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: var(--brand-gradient);
+  box-shadow: 0 0 0 2px var(--outline), 0 3px 0 var(--outline);
+}
+
+.card-title .badge-icon svg.icon {
+  width: 17px;
+  height: 17px;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--magenta-600);
+}
+
+.eyebrow svg.icon {
+  width: 14px;
+  height: 14px;
+  color: var(--gold-400);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+/* ---- the primary button: the logo's letters as a button ------------------------------------------------------- */
+.bloom-button {
+  --depth: 6px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-width: 280px;
+  height: 74px;
+  padding: 0 38px 0 30px;
+  border-radius: var(--radius-pill);
+  background: var(--brand-gradient);
+  border: 3px solid var(--outline);
+  box-shadow: 0 var(--depth) 0 var(--outline), 0 calc(var(--depth) + 10px) 26px rgba(20, 24, 84, 0.38);
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 27px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-shadow: 0 2px 0 rgba(26, 31, 78, 0.55);
+  overflow: hidden;
+  transform: translateY(0);
+  transition: transform 120ms var(--ease), box-shadow 120ms var(--ease), filter 160ms var(--ease);
+  isolation: isolate;
+}
+
+/* the glossy highlight of the letters */
+.bloom-button::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: 18px;
+  right: 18px;
+  top: 5px;
+  height: 42%;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0.05));
+}
+
+.bloom-button svg.icon {
+  width: 30px;
+  height: 30px;
+  filter: drop-shadow(0 2px 0 rgba(26, 31, 78, 0.55));
+}
+
+.bloom-button:hover:not(:disabled) {
+  filter: brightness(1.06) saturate(1.08);
+}
+
+.bloom-button:active:not(:disabled) {
+  transform: translateY(4px);
+  box-shadow: 0 2px 0 var(--outline), 0 8px 16px rgba(20, 24, 84, 0.3);
+}
+
+.bloom-button[data-tone="calm"] {
+  background: linear-gradient(180deg, #ffffff 0%, #e9eeff 100%);
+  color: var(--text-strong);
+  text-shadow: none;
+}
+
+.bloom-button[data-tone="calm"] svg.icon {
+  filter: none;
+  color: var(--magenta-600);
+}
+
+.bloom-button:disabled {
+  filter: saturate(0.85);
+}
+
+/* progress shown inside the button while preparing */
+.bloom-button .button-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 6px;
+  width: var(--progress, 0%);
+  background: rgba(255, 255, 255, 0.85);
+  transition: width 300ms var(--ease);
+}
+
+.bloom-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.05;
+}
+
+.bloom-label small {
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  opacity: 0.92;
+  text-shadow: none;
+}
+
+/* ---- ordinary buttons ------------------------------------------------------------------------------------------- */
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 18px;
+  border-radius: var(--radius-pill);
+  font-weight: 800;
+  font-size: 14px;
+  background: #fff;
+  color: var(--text-strong);
+  border: 2px solid var(--outline);
+  box-shadow: 0 3px 0 var(--outline);
+  transition: transform 100ms var(--ease), box-shadow 100ms var(--ease), background 140ms var(--ease);
+}
+
+.button:hover:not(:disabled) {
+  background: var(--sky-100);
+}
+
+.button:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--outline);
+}
+
+.button.primary {
+  background: var(--brand-gradient-x);
+  color: #fff;
+  text-shadow: 0 1px 0 rgba(26, 31, 78, 0.5);
+}
+
+.button:disabled {
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ink-400);
+  border-color: rgba(26, 31, 78, 0.25);
+  box-shadow: none;
+}
+
+.button svg.icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* a function that exists in the design but is not implemented yet */
+.pending-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 11px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--ink-700);
+  background: repeating-linear-gradient(135deg, rgba(169, 140, 255, 0.16) 0 6px, rgba(169, 140, 255, 0.28) 6px 12px);
+  border: 1.5px dashed rgba(90, 70, 190, 0.55);
+  white-space: nowrap;
+}
+
+.pending-tag svg.icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* ---- progress bar ----------------------------------------------------------------------------------------------- */
+.bar {
+  --bar-height: 14px;
+  --bar-track: rgba(26, 31, 78, 0.1);
+  --bar-outline: var(--outline);
+  position: relative;
+  height: var(--bar-height);
+  border-radius: var(--radius-pill);
+  background: var(--bar-track);
+  overflow: hidden;
+}
+
+.bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--value, 0%);
+  border-radius: inherit;
+  background: var(--brand-gradient-x);
+  box-shadow: 0 0 0 1.5px var(--bar-outline) inset;
+  transition: width 320ms var(--ease);
+}
+
+.bar-fill::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 2px;
+  height: 35%;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.bar[data-active="true"] .bar-fill {
+  background-image: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.45) 50%, transparent 70%),
+    var(--brand-gradient-x);
+  background-size: 200% 100%, 100% 100%;
+  animation: shimmer 1.8s linear infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 150% 0, 0 0;
+  }
+  to {
+    background-position: -50% 0, 0 0;
+  }
+}
+
+/* ---- step list -------------------------------------------------------------------------------------------------- */
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 18px;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 42px;
+  padding: 4px 8px;
+  border-radius: 12px;
+}
+
+.step[data-status="active"] {
+  background: rgba(63, 212, 255, 0.12);
+}
+
+.step-marker {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink-500);
+  background: #fff;
+  border: 2px solid rgba(26, 31, 78, 0.22);
+}
+
+.step-marker svg.icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 3;
+}
+
+.step[data-status="done"] .step-marker,
+.step[data-status="skipped"] .step-marker {
+  color: #fff;
+  background: var(--brand-gradient);
+  border-color: var(--outline);
+}
+
+.step[data-status="skipped"] .step-marker {
+  opacity: 0.7;
+}
+
+.step[data-status="active"] .step-marker {
+  color: var(--text-strong);
+  border-color: transparent;
+}
+
+.step[data-status="active"] .step-marker::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, var(--cyan-400), var(--pink-500), transparent 70%);
+  -webkit-mask: radial-gradient(circle, transparent 12px, #000 13px);
+  animation: spin 1s linear infinite;
+}
+
+.step[data-status="error"] .step-marker {
+  color: #fff;
+  background: var(--danger);
+  border-color: #8f1b2c;
+}
+
+/* a step that did not finish but does not stop the game (the graphics preparation) */
+.step[data-status="attention"] .step-marker {
+  color: #fff;
+  background: var(--warn);
+  border-color: #8a5a00;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.step-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.step-name {
+  font-weight: 800;
+  color: var(--text-strong);
+}
+
+.step-meta {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.step[data-status="pending"] .step-name {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+/* ---- log -------------------------------------------------------------------------------------------------------- */
+.log {
+  height: 230px;
+  overflow-y: auto;
+  padding: 14px 16px;
+  border-radius: var(--radius-m);
+  background: var(--ink-950);
+  border: 2px solid var(--outline);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #c9d3ff;
+  user-select: text;
+  cursor: text;
+}
+
+.log::-webkit-scrollbar {
+  width: 10px;
+}
+
+.log::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+}
+
+.log-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log-line[data-kind="step"] {
+  color: var(--cyan-300);
+  font-weight: 700;
+}
+
+.log-line[data-kind="group"] {
+  color: #9aa6e6;
+}
+
+.log-line[data-kind="warn"] {
+  color: var(--gold-400);
+}
+
+.log-line[data-kind="error"] {
+  color: #ff8aa0;
+  font-weight: 700;
+}
+
+.log-line[data-kind="done"] {
+  color: #8ff0a8;
+  font-weight: 700;
+}
+
+.log-empty {
+  color: #7680b8;
+  font-family: var(--font-body);
+}
+
+/* ---- key/value rows --------------------------------------------------------------------------------------------- */
+.facts {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.fact {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 2px 12px;
+  align-items: center;
+}
+
+.fact-icon {
+  grid-row: span 2;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  color: var(--ink-700);
+  background: rgba(63, 212, 255, 0.14);
+}
+
+.fact dt {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.fact dd {
+  margin: 0;
+  font-weight: 700;
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
