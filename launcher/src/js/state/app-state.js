@@ -216,9 +216,13 @@ export async function refreshTextures() {
   }
 }
 
+/** Returns an error message, or "" when the choice was saved (only a saved choice takes effect). */
 export async function setBc7Textures(enabled) {
   try {
     await backend.setBc7Textures(enabled);
+    return "";
+  } catch (e) {
+    return errorText(e);
   } finally {
     await refreshTextures();
   }

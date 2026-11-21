@@ -121,7 +121,7 @@ export function mountSettings(root, {
   // ---- experimental BC7 textures (NX_ASTC_BC7): the choice, and the cache prepared from the player's own package
   const x = s.textures;
   const bc7Buttons = [false, true].map((on) => h("button.choice", {
-    type: "button", "data-on": String(on), on: { click: () => onBc7Textures(on) },
+    type: "button", "data-on": String(on), on: { click: async () => setText(texError, await onBc7Textures(on)) },
   }, on ? x.on : x.off));
   const bc7Mode = h("p.verify-line", { role: "status" }); // what the game starts with: On or Off, in words
   const texState = h("p.verify-line");

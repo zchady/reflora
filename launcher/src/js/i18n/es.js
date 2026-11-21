@@ -32,6 +32,7 @@ export default {
   action: { install: "Instalar", prepare: "Preparar", resume: "Continuar", play: "Jugar", running: "Juego abierto", preparing: "Preparando" },
 
   errors: {
+    not_saved: "No se pudo guardar la elección: nada cambió. Abre REFLORA.exe directamente desde el Explorador (abierto desde dentro de otro programa, puede no poder guardar la configuración).",
     textures_ready: "Las texturas ya están preparadas para este juego.",
     not_ready: "La instalación no está lista.",
     already_running: "El juego ya está abierto.",

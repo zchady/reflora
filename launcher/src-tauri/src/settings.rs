@@ -65,15 +65,24 @@ impl SettingsStore {
         self.inner.lock().unwrap().clone()
     }
 
+    /// The change takes effect only once it is saved: when the file cannot be written (a folder the launcher may not
+    /// write to, for example when started inside another app's container), nothing changes and the error is returned,
+    /// so what the interface shows is what the next start will read.
     pub fn update(&self, change: impl FnOnce(&mut LauncherSettings)) -> std::io::Result<()> {
         let mut s = self.inner.lock().unwrap();
-        change(&mut s);
+        let mut next = s.clone();
+        change(&mut next);
         if let Some(dir) = self.path.parent() {
             std::fs::create_dir_all(dir)?;
         }
         let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(&*s).expect("settings serialize"))?;
-        std::fs::rename(&tmp, &self.path)
+        std::fs::write(&tmp, serde_json::to_vec_pretty(&next).expect("settings serialize"))?;
+        if let Err(e) = std::fs::rename(&tmp, &self.path) {
+            let _ = std::fs::remove_file(&tmp); // our own temporary file
+            return Err(e);
+        }
+        *s = next;
+        Ok(())
     }
 
     pub fn workspace(&self, default: &Path) -> Workspace {
@@ -119,6 +128,17 @@ mod tests {
         let s = SettingsStore::load(path).get();
         assert_eq!(s.player_name.as_deref(), Some("Ana"));
         assert!(!s.bc7_textures);
+    }
+
+    #[test]
+    fn a_change_that_cannot_be_saved_does_not_apply() {
+        let d = temp_dir("settings-unsaved");
+        let path = d.join("settings.json");
+        std::fs::create_dir_all(&path).unwrap(); // a folder where the file goes: the rename fails
+        let store = SettingsStore::load(path.clone());
+        assert!(store.update(|s| s.bc7_textures = true).is_err());
+        assert!(!store.get().bc7_textures, "the interface must not show a choice the next start will not read");
+        assert!(!path.with_extension("json.tmp").exists(), "no temporary file left behind");
     }
 
     #[test]

@@ -260,7 +260,7 @@ fn textures_info(state: State<'_, AppState>) -> TexturesInfo {
 /// Takes effect the next time the game starts.
 #[tauri::command]
 fn set_bc7_textures(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
-    state.settings.update(|s| s.bc7_textures = enabled).map_err(|e| e.to_string())
+    state.settings.update(|s| s.bc7_textures = enabled).map_err(|_| "not_saved".to_string()) // nothing changed
 }
 
 /// The preparer's `textures` step alone (the BC7 cache in <workspace>\data\astc_bc7_cache, from the player's own
