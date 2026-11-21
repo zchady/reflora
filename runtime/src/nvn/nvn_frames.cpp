@@ -39,6 +39,7 @@
 #include <tuple>
 #include <vector>
 
+#include "nvn_astc_cache.h"  // texture_hash (NX_VRAM_EVICT)
 #include "nvn_vk.h"
 #include "platform.h"
 
@@ -709,6 +710,12 @@ Texture::~Texture() {
     g_grave.push_back({g_submitted + 1, std::move(image)});
 }
 
+void bury_image(std::shared_ptr<GpuImage> img) {
+    if (!img) return;
+    std::lock_guard lk(g_grave_lock);
+    g_grave.push_back({g_submitted + 1, std::move(img)});
+}
+
 // A host-visible buffer of its own for one big texture upload: the ring is 256 MB, and a scene load with ASTC decoded
 // to RGBA8 staged 312 MB in one submit, wrapping over its own data before the GPU had copied it (DEBUG-2 #72). Freed
 // once the submit being recorded is retired (as images in the grave). Falls back to the ring if allocation fails.
@@ -815,6 +822,141 @@ std::shared_ptr<GpuImage> reuse_image(const Texture& t) {
     }
     g_reused++;
     return img;
+}
+
+// ---- VRAM eviction (experimental, NX_VRAM_EVICT=1; off by default) ------------------------------------------------
+// The device memory of a long session grows with the images of textures the game keeps alive (~37,000 objects on the
+// world map), many of them not sampled for minutes (NX_VRAM_LOG=2's census). An image can give its memory back when it
+// can be made again exactly as it is: uploaded from guest memory, never written by the GPU (rendered: draws, clears,
+// copies, storage bindings), no nvnTextureWriteTexels in it, its texture not a render target (those are rebuilt as
+// cleared, nvn_pipeline.cpp), its pool physical and still of the same generation, and the bytes its upload read
+// unchanged (a hash taken at the upload). It is then marked evicted: its Vulkan image, views and memory go to the grave
+// with the next submit's serial (freed when the GPU is done, as a destroyed texture's), and image_of makes a new one at
+// the next use, which sampled_ready treats as not ready (the pass ends first, as for a first use).
+// It acts only above a budget: NX_VRAM_EVICT_BUDGET_MB (an artificial one, for tests), else the driver's
+// (VK_EXT_memory_budget); measured as device memory held minus the free space inside image blocks. From 90% of it,
+// images idle for NX_VRAM_EVICT_AGE_S (default 60) go, oldest first, until 80%, at most NX_VRAM_EVICT_MB (default 64)
+// per check; a check every 30 presents. NX_VRAM_EVICT_ASTC=0 keeps ASTC images (decoded on the CPU when rebuilt).
+namespace {
+
+struct EvictStats {
+    uint64_t checks = 0, over = 0, evicted = 0, evicted_bytes = 0, changed = 0, pool_gone = 0, rebuilt = 0,
+             rebuilt_bytes = 0, rebuild_ns = 0, rebuild_max_ns = 0, check_ns_max = 0, last_log = 0;
+} g_evict;
+
+uint64_t env_u64(const char* name, uint64_t def) {
+    const char* e = std::getenv(name);
+    return e && *e ? std::strtoull(e, nullptr, 10) : def;
+}
+
+// Under objects_lock (shared): the source of an upload is still what it was.
+bool evict_source_same(const GpuImage& img) {
+    auto it = objects().find(img.src_pool);
+    auto* pool = it == objects().end() ? nullptr : dynamic_cast<MemoryPool*>(it->second.get());
+    if (!pool || !pool->memory || pool->serial != img.pool_serial || img.src_offset + img.src_bytes > pool->size ||
+        pool->memory + img.src_offset != img.src_memory) {
+        g_evict.pool_gone++;
+        return false;
+    }
+    if (texture_hash(reinterpret_cast<const uint8_t*>(img.src_memory), img.src_bytes) != img.src_hash) {
+        g_evict.changed++;
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+bool evict_on() {
+    static const bool on = [] {
+        const char* e = std::getenv("NX_VRAM_EVICT");
+        return e && e[0] == '1';
+    }();
+    return on;
+}
+
+void vram_evict_note_upload(const Texture& t, GpuImage& img) {
+    MemoryPool* pool = get<MemoryPool>(t.pool);  // under the object table's shared lock (nvn.h)
+    img.src_bytes = 0;
+    if (!pool || !pool->memory || t.memory != pool->memory + t.offset) return;  // virtual or unknown: kept
+    img.src_pool = t.pool, img.src_offset = t.offset, img.src_memory = t.memory, img.src_bytes = t.readable;
+    img.src_hash = texture_hash(reinterpret_cast<const uint8_t*>(t.memory), t.readable);
+}
+
+void vram_evict_note_rebuild(const GpuImage& img, uint64_t ns) {
+    g_evict.rebuilt++, g_evict.rebuild_ns += ns, g_evict.rebuild_max_ns = std::max(g_evict.rebuild_max_ns, ns);
+    g_evict.rebuilt_bytes += image_memory_size(img.memory, img.memory_handle);
+}
+
+// NX_RELEASE_REPLACED (nvn_supersede.cpp): the image's Vulkan objects go to the grave with the next submit's serial
+// (freed when the GPU is done with every submit that could use them, as a destroyed texture's image); the GpuImage
+// stays, marked superseded, and image_of makes a new one at its next use. Under the GPU lock, between submits.
+void supersede_release(GpuImage& img) {
+    auto husk = std::make_shared<GpuImage>();
+    husk->image = img.image, husk->memory = img.memory, husk->memory_handle = img.memory_handle, husk->view = img.view;
+    img.image = VK_NULL_HANDLE, img.memory = VK_NULL_HANDLE, img.memory_handle = 0, img.view = VK_NULL_HANDLE;
+    img.superseded = true, img.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    std::lock_guard gl(g_grave_lock);
+    g_grave.push_back({g_submitted + 1, std::move(husk)});
+}
+
+void vram_evict_tick() {
+    static uint64_t presents = 0;
+    if (++presents % 30) return;
+    const uint64_t t0 = plat::monotonic_ns();
+    g_evict.checks++;
+    static const uint64_t artificial = env_u64("NX_VRAM_EVICT_BUDGET_MB", 0) << 20;
+    static const uint64_t min_age = env_u64("NX_VRAM_EVICT_AGE_S", 60) * 1'000'000'000ull;
+    static const uint64_t per_check = env_u64("NX_VRAM_EVICT_MB", 64) << 20;
+    static const bool astc = env_u64("NX_VRAM_EVICT_ASTC", 1) != 0;
+    const uint64_t budget = artificial ? artificial : vram_driver_budget();
+    const ImageMemoryStats im = image_memory_stats();
+    const uint64_t held = device_memory_held(), idle_inside = im.block_bytes - im.used_bytes;
+    const uint64_t used = held > idle_inside ? held - idle_inside : 0;
+    if (budget && used > budget / 10 * 9) {
+        g_evict.over++;
+        const uint64_t target = budget / 10 * 8;
+        std::vector<std::shared_ptr<GpuImage>> candidates;
+        for_each_live_image([&](const std::shared_ptr<GpuImage>& img) {
+            if (img->evicted || !img->image || !img->uploaded || img->rendered || img->texels || img->target_flag ||
+                !img->src_bytes || (!astc && astc_decoded(img->nvn_format)) || t0 < img->last_used + min_age)
+                return;
+            candidates.push_back(img);
+        });
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const auto& a, const auto& b) { return a->last_used < b->last_used; });
+        uint64_t freed = 0, need = used - target;
+        std::shared_lock lk(objects_lock());  // pools stay as they are while their bytes are hashed
+        for (const auto& img : candidates) {
+            if (freed >= need || freed >= per_check) break;
+            if (!evict_source_same(*img)) continue;
+            const uint64_t size = image_memory_size(img->memory, img->memory_handle);
+            auto husk = std::make_shared<GpuImage>();  // the Vulkan objects, freed by the grave
+            husk->image = img->image, husk->memory = img->memory, husk->memory_handle = img->memory_handle;
+            husk->view = img->view;
+            img->image = VK_NULL_HANDLE, img->memory = VK_NULL_HANDLE, img->memory_handle = 0, img->view = VK_NULL_HANDLE;
+            img->evicted = true, img->uploaded = false, img->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+            {
+                std::lock_guard gl(g_grave_lock);
+                g_grave.push_back({g_submitted + 1, std::move(husk)});
+            }
+            freed += size, g_evict.evicted++, g_evict.evicted_bytes += size;
+        }
+    }
+    const uint64_t ns = plat::monotonic_ns() - t0;
+    g_evict.check_ns_max = std::max(g_evict.check_ns_max, ns);
+    if (t0 > g_evict.last_log + 30'000'000'000ull) {
+        g_evict.last_log = t0;
+        log("nvn/vk: vram evict: used %.0f MB of budget %.0f MB%s; %llu checks (%llu over 90%%, the slowest %.2f ms); "
+            "evicted %llu (%.0f MB); kept: %llu changed since upload, %llu pool gone; rebuilt %llu (%.0f MB, %.1f ms, the "
+            "slowest %.2f ms)",
+            double(used) / (1 << 20), double(budget) / (1 << 20), artificial ? " (artificial)" : "",
+            (unsigned long long)g_evict.checks, (unsigned long long)g_evict.over, double(g_evict.check_ns_max) / 1e6,
+            (unsigned long long)g_evict.evicted, double(g_evict.evicted_bytes) / (1 << 20),
+            (unsigned long long)g_evict.changed, (unsigned long long)g_evict.pool_gone, (unsigned long long)g_evict.rebuilt,
+            double(g_evict.rebuilt_bytes) / (1 << 20), double(g_evict.rebuild_ns) / 1e6,
+            double(g_evict.rebuild_max_ns) / 1e6);
+    }
 }
 
 }  // namespace nx::nvn

@@ -2,6 +2,7 @@
 // resources, draws). Everything here runs under the GPU lock taken by gpu_submit / gpu_present.
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -37,7 +38,43 @@ struct GpuImage {
     uint32_t nvn_format = 0;  // the texture's NVN format
     uint64_t pool_serial = 0;  // the generation of the pool the texture that made it lived in (Texture::pool_serial)
     uint64_t id = 0;           // made in this order (logs)
+    // NX_VRAM_EVICT (nvn_frames.cpp, experimental): an uploaded image nothing rendered into may give its memory back
+    // and be made again from guest memory at its next use. Its texture flags (render target: rebuilt as cleared, so
+    // never evicted), the last submit that sampled it, and where its upload read from, with a hash of those bytes.
+    bool evicted = false;      // its Vulkan objects are gone: image_of makes a new image
+    bool rebuilt = false;      // made to replace an evicted one (counted at its upload)
+    bool target_flag = false;  // its texture is a render target (flag 0x8)
+    uint64_t last_used = 0;    // submit_start_ns of the last submit that sampled it
+    uint64_t src_pool = 0, src_offset = 0, src_memory = 0, src_bytes = 0, src_hash = 0;  // 0 bytes: not recorded
+    // NX_RELEASE_REPLACED (nvn_supersede.cpp): where its texture lives in guest memory, when it was last used (frame,
+    // set by transition: every use passes there), and whether its memory was given back (made again at its next use).
+    uint64_t guest_memory = 0, guest_bytes = 0, touched = 0;
+    bool superseded = false;
+    // NX_ASTC_BC7 (nvn_astc_bc7.h): an ASTC texture kept as BC7, and the key it was chosen for (its upload takes the
+    // cache's blocks only for those very bytes). Demoted: something BC7 cannot serve came (a copy, CPU texel writes,
+    // other bytes): image_of hands it to the grave and makes the texture's image again as RGBA8.
+    bool astc_bc7 = false, bc7_demoted = false;
+    // A reason to make it again as RGBA8 found where it cannot be done (view_format: a view BC7 cannot serve): done
+    // by ensure_contents before its next use, outside a render pass (sampled_ready reports it not ready)
+    mutable const char* bc7_remake_why = nullptr;
+    uint64_t bc7_hash = 0, bc7_tiled = 0;
+    uint32_t bc7_bh0 = 0;
 };
+// nvn_frames.cpp: one holder's reference to an image, freed (with the last holder's) once no submit can use it.
+void bury_image(std::shared_ptr<GpuImage> img);
+// nvn_image.cpp: a texture's BC7 image demoted (`why` counted) and its image made again as RGBA8; image_of otherwise.
+GpuImage* image_remake_rgba8(uint64_t texture, const char* why);
+
+// ---- NX_RELEASE_REPLACED=1 (Windows only, diagnostic prototype, off by default; nvn_supersede.cpp) -------------------
+// A render target whose guest bytes another target at the same guest address has since cleared in full (so on the
+// console its contents are gone), and that nothing used for 600 frames, gives its device memory back.
+bool release_replaced_on();
+// draw_clear: a clear with no scissor and no channel mask of `img` (texture `guest`) at level 0, layer 0.
+void supersede_note_full_clear(uint64_t guest, const GpuImage& img, uint32_t level, VkImageAspectFlags aspects);
+void supersede_tick();  // at each present, under the GPU lock (as vram_evict_tick)
+void supersede_note_remade(const GpuImage& img);  // image_of made a released image again
+void supersede_log();   // with each VRAM line
+void supersede_release(GpuImage& img);  // nvn_frames.cpp: its Vulkan objects to the grave, the image marked superseded
 
 VkDevice vk_device();
 VkInstance vk_instance();
@@ -64,6 +101,31 @@ struct ImageMemory {
 };
 bool image_memory_alloc(const VkMemoryRequirements& req, ImageMemory& out);
 void image_memory_free(VkDeviceMemory memory, uint64_t handle);
+// Image memory now: blocks allocated and their bytes, the bytes images use in them, blocks with nothing in them, live
+// images in blocks and with an allocation of their own (and those bytes).
+struct ImageMemoryStats {
+    uint64_t blocks = 0, block_bytes = 0, used_bytes = 0, idle_blocks = 0, block_images = 0, own_images = 0, own_bytes = 0;
+};
+ImageMemoryStats image_memory_stats();
+// NX_VRAM_EVICT=1 (experimental, off by default; nvn_frames.cpp): evict_on() says so; vram_evict_tick() runs at each
+// present under the GPU lock; vram_evict_note_upload() records an upload's source (nvn_upload.cpp);
+// vram_evict_note_rebuild() counts a rebuild's upload time (nvn_pipeline.cpp).
+bool evict_on();
+void vram_evict_tick();
+void vram_evict_note_upload(const Texture& t, GpuImage& img);
+void vram_evict_note_rebuild(const GpuImage& img, uint64_t ns);
+// The live images of textures over guest memory (nvn_image.cpp's sharing map), for the eviction; GPU lock held.
+void for_each_live_image(const std::function<void(const std::shared_ptr<GpuImage>&)>& fn);
+// Device memory this process holds (all heaps flagged device-local), from the vkAllocateMemory accounting.
+uint64_t device_memory_held();
+uint64_t vram_driver_budget();  // VK_EXT_memory_budget's budget of the largest device-local heap, 0: unknown
+VkDeviceSize image_memory_size(VkDeviceMemory memory, uint64_t handle);  // an image's bytes (0: unknown)
+// NX_VRAM_LOG (default on on Windows): every 30 s at most (nvn_dedup.cpp's report), the device memory this process has
+// allocated per heap (every vkAllocateMemory), the image blocks' occupancy, and the driver's usage and budget per heap
+// (VK_EXT_memory_budget). NX_VRAM_LOG=2 adds a census: who holds each live image (game textures, pool snapshots, kept
+// textures) and, for uploaded and GPU-written images apart, how long ago a draw last sampled it. Measurement only:
+// nothing is freed or kept because of it.
+void vram_log();
 
 // The image behind an NVN texture (guest NVNtexture*), made on first use.
 GpuImage* image_of(uint64_t texture);

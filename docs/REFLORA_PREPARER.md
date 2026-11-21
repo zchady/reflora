@@ -39,6 +39,7 @@ apenas lido, nunca copiado: o jogo lê o RomFS direto dele, pelo caminho gravado
 | 7 | `config` | Grava o caminho do NUP e cria a pasta dos saves | `data/nup.txt`, `data/user/` |
 | 8 | `check` | Roda o jogo 45 s sem janela. Exige tela título, 0 shaders faltando e 0 erros | `work/check.log`, `work/check_title.ppm` |
 | 9 | `graphics` | Preparação gráfica: os pipelines do catálogo do projeto compilados pelo driver deste PC (seção abaixo). Nunca falha a preparação. | `data/pipeline_catalog.bin`, `data/pipelines_<vendor>_<device>.bin`, `work/graphics.json`, `work/graphics.log` |
+| — | `textures` (opcional) | Só quando pedida em `--steps`: o cache ASTC → BC7 do modo `NX_ASTC_BC7` (desligado por padrão), gerado pelo próprio runtime (seção abaixo). Nunca falha a preparação. | `data/astc_bc7_cache/`, `work/textures.json`, `work/textures.log` |
 
 ## Protocolo para o launcher (stdout, uma linha por evento)
 
@@ -190,6 +191,26 @@ como antes.
 - O catálogo é o mesmo para todas. As regras canônicas são reaplicadas com as capacidades da GPU local.
 - Um pipeline que o driver recusar conta como `partial`.
 - Poucos hardwares foram medidos até agora.
+
+## Etapa `textures` (opcional: cache BC7)
+
+Para o modo `NX_ASTC_BC7=1` (desligado por padrão; `docs/nvn/SWITCHES.md`). Em GPUs sem ASTC, as texturas ASTC
+são decodificadas para RGBA8 (32 bits por texel). Com o modo ligado, as que têm uma conversão aceita no cache ficam
+em BC7 (8 bits por texel). A etapa gera esse cache antes de jogar, para a primeira sessão não converter durante o
+jogo.
+
+- **Quem converte é o runtime**, com `NX_ASTC_BC7_PREPARE=1`: lê todas as texturas ASTC 2D e 2D array dos BNTX do
+  pacote (SARC e zstd abertos), calcula a chave como o jogo calculará, converte, julga a qualidade e grava o
+  veredito em `data/astc_bc7_cache/`. Depois sai. O NUP só é lido.
+- **Retomada:** os vereditos já gravados são pulados; cada arquivo é escrito com outro nome e renomeado quando
+  completo. Uma interrupção nunca deixa um veredito parcial.
+- **Custo:** alguns minutos, conforme o processador (todos os núcleos lógicos menos 2, prioridade abaixo do
+  normal), até ~2 GB de memória; cache de cerca de 3 GB.
+- **Resultado:** `RESULT textures <ok|partial|failed|skipped> converted=<n> accepted=<n> kept=<n> seconds=<s>` e
+  `work/textures.json`. Uma falha só emite `WARN`: o jogo continua jogável e, com o modo ligado, converte o que
+  faltar em segundo plano para a sessão seguinte.
+- **Opções:** `--texture-jobs N` (padrão: núcleos lógicos − 2, até 16), `--textures-timeout S` (padrão 3600 s).
+- **O cache contém dados derivados do jogo do usuário:** fica nesta máquina e nunca é publicado nem distribuído.
 
 ## Integração com o launcher
 

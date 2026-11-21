@@ -22,6 +22,8 @@ pub struct LauncherSettings {
     pub player_name: Option<String>,
     /// The chosen profile icon (an id of the local icon library, avatars.rs); unset = no picture.
     pub avatar: Option<String>,
+    /// Experimental BC7 textures: the game starts with NX_ASTC_BC7=1 (off unless the user turns it on).
+    pub bc7_textures: bool,
 }
 
 pub const LANGUAGES: [&str; 3] = ["pt-BR", "en", "es"];
@@ -107,6 +109,16 @@ mod tests {
         assert_eq!(SettingsStore::load(d.join("settings.json")).get(), LauncherSettings::default());
         std::fs::write(d.join("broken.json"), "{ not json").unwrap();
         assert_eq!(SettingsStore::load(d.join("broken.json")).get(), LauncherSettings::default());
+    }
+
+    #[test]
+    fn settings_of_an_earlier_version_keep_bc7_off() {
+        let d = temp_dir("settings-earlier");
+        let path = d.join("settings.json");
+        std::fs::write(&path, r#"{ "nup_path": "D:\\Games\\Wonder.nup", "language": "en", "player_name": "Ana" }"#).unwrap();
+        let s = SettingsStore::load(path).get();
+        assert_eq!(s.player_name.as_deref(), Some("Ana"));
+        assert!(!s.bc7_textures);
     }
 
     #[test]

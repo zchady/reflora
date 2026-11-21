@@ -17,6 +17,7 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 #include <deque>
@@ -24,6 +25,7 @@
 #include <thread>
 #include <atomic>
 #include "hitch.h"
+#include "nvn_astc_bc7.h"
 #include "nvn_vk.h"
 #include "hooks.h"
 #include "platform.h"
@@ -58,6 +60,68 @@ VkSurfaceTransformFlagBitsKHR g_sc_transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT
 VkFormat g_sc_format = VK_FORMAT_B8G8R8A8_UNORM;
 VkSemaphore g_acquired = VK_NULL_HANDLE, g_rendered = VK_NULL_HANDLE;
 std::mutex g_queue_lock;  // queue_lock() (nvn_vk.h)
+
+// Device memory accounting (vram_log): what this process holds, by heap, from the wrappers below; with
+// VK_EXT_memory_budget, what the driver says the process uses of each heap and may use. Allocations are rare (image
+// blocks of 256 MB, staging and upload buffers), so a lock and a map cost nothing measurable.
+bool g_memory_budget = false;
+std::mutex g_mem_lock;
+std::unordered_map<VkDeviceMemory, std::pair<VkDeviceSize, uint32_t>> g_mem_live;  // size, heap
+VkDeviceSize g_mem_heap[VK_MAX_MEMORY_HEAPS] = {};
+uint64_t g_mem_allocs = 0, g_mem_frees = 0, g_mem_failed = 0;
+PFN_vkAllocateMemory g_real_allocate = nullptr;
+PFN_vkFreeMemory g_real_free = nullptr;
+
+VKAPI_ATTR VkResult VKAPI_CALL counted_allocate(VkDevice d, const VkMemoryAllocateInfo* ai, const VkAllocationCallbacks* cb,
+                                                VkDeviceMemory* out) {
+    VkResult r = g_real_allocate(d, ai, cb, out);
+    std::lock_guard lk(g_mem_lock);
+    if (r != VK_SUCCESS || !out || !*out) {
+        g_mem_failed++;
+        return r;
+    }
+    uint32_t heap = ai->memoryTypeIndex < g_memory.memoryTypeCount ? g_memory.memoryTypes[ai->memoryTypeIndex].heapIndex : 0;
+    g_mem_live[*out] = {ai->allocationSize, heap};
+    g_mem_heap[heap] += ai->allocationSize;
+    g_mem_allocs++;
+    return r;
+}
+
+VKAPI_ATTR void VKAPI_CALL counted_free(VkDevice d, VkDeviceMemory m, const VkAllocationCallbacks* cb) {
+    if (m) {
+        std::lock_guard lk(g_mem_lock);
+        if (auto it = g_mem_live.find(m); it != g_mem_live.end()) {
+            g_mem_heap[it->second.second] -= it->second.first;
+            g_mem_live.erase(it);
+            g_mem_frees++;
+        }
+    }
+    g_real_free(d, m, cb);
+}
+
+// NX_VRAM_LOG=0|1: the accounting and its log. On by default on Windows (a lock per allocation, two log lines every
+// 30 s); off elsewhere, where it would also enable VK_EXT_memory_budget on the device.
+// NX_VRAM_LOG=2 adds the census of who holds each image and how long ago it was sampled: a walk of every texture
+// object (~37,000 on Wonder's world map, 6-7 ms on the present thread every 30 s), so only when asked for.
+int vram_log_level() {
+    static const int level = [] {
+        const char* e = std::getenv("NX_VRAM_LOG");
+        if (e && *e) return std::atoi(e);
+#if defined(_WIN32)
+        return 1;
+#else
+        return 0;
+#endif
+    }();
+    return level;
+}
+bool vram_log_on() { return vram_log_level() > 0; }
+
+void count_device_memory() {  // the eviction's measure too (NX_VRAM_EVICT)
+    if (!(vram_log_on() || evict_on()) || g_real_allocate || !p_vkAllocateMemory || !p_vkFreeMemory) return;
+    g_real_allocate = p_vkAllocateMemory, g_real_free = p_vkFreeMemory;
+    p_vkAllocateMemory = counted_allocate, p_vkFreeMemory = counted_free;
+}
 const char* g_present_mode_name = "";  // the swapchain's present mode (the overlay)
 VkBool32 g_depth_clip_control = VK_FALSE;
 VkBool32 g_fragment_interlock = VK_FALSE;
@@ -218,6 +282,10 @@ bool init() {
         dexts.push_back("VK_KHR_portability_subset");
         *tail = &fport, tail = &fport.pNext;
     }
+    if ((vram_log_on() || evict_on()) && has_extension(dext, "VK_EXT_memory_budget")) {  // budget and usage per heap
+        dexts.push_back("VK_EXT_memory_budget");
+        g_memory_budget = true;
+    }
     p_vkGetPhysicalDeviceFeatures2(g_physical, &features);
     g_depth_clip_control = fclip.depthClipControl;
     g_fragment_interlock = fint.fragmentShaderPixelInterlock;
@@ -230,6 +298,7 @@ bool init() {
     // NX_ASTC_DECODE=1|linear|srgb: the CPU decoder even where the GPU has ASTC (to compare the two on one GPU).
     set_astc_native(g_features.textureCompressionASTC_LDR);
     log("nvn/vk: ASTC %s", astc_native() ? "native" : "decoded to RGBA8 at upload (no textureCompressionASTC_LDR)");
+    astc_bc7_init(g_features.textureCompressionBC);  // NX_ASTC_BC7 (nvn_astc_bc7.cpp): off unless asked for
     log("nvn/vk: depthClamp %u, depthBiasClamp %u, depthBounds %u, depth clip control %u (extension %u)",
         g_features.depthClamp, g_features.depthBiasClamp, g_features.depthBounds, g_depth_clip_control,
         has_extension(dext, "VK_EXT_depth_clip_control") ? 1u : 0u);
@@ -247,6 +316,7 @@ bool init() {
     dci.ppEnabledExtensionNames = dexts.data();
     dci.pNext = &features;
     if (!check(p_create_device(g_physical, &dci, nullptr, &g_device), "vkCreateDevice")) return false;
+    count_device_memory();  // vram_log: every vkAllocateMemory / vkFreeMemory from here on, by heap
     p_vkGetDeviceQueue(g_device, g_family, 0, &g_queue);
 
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -812,6 +882,8 @@ void gpu_present(uint64_t texture, const int32_t* crop, uint64_t show_at) {
     host_work_frame();  // the next frame's reports start from no host-only work
     if (!init()) return;
     if (!async_gpu() || pipelined()) free_retired_images(async_gpu() ? frame_completed() : UINT64_MAX);
+    if (evict_on()) vram_evict_tick();  // NX_VRAM_EVICT (experimental): between submits, under the GPU lock
+    if (release_replaced_on()) supersede_tick();  // NX_RELEASE_REPLACED (nvn_supersede.cpp): the same place
     if (plat::headless()) return present_headless(texture);
     if (plat::window_minimized()) return;
     if (plat::window_generation() != g_window_gen) {  // Android: a new window after home or the lock screen
@@ -910,6 +982,131 @@ void gpu_present(uint64_t texture, const int32_t* crop, uint64_t show_at) {
     }
     if (VkResult last = VkResult(g_present_result.exchange(VK_SUCCESS)); last != VK_SUCCESS)
         if (present_needs_new_swapchain(last)) make_swapchain();
+}
+
+uint64_t device_memory_held() {
+    std::lock_guard lk(g_mem_lock);
+    uint64_t sum = 0;
+    for (uint32_t h = 0; h < g_memory.memoryHeapCount; h++)
+        if (g_memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) sum += g_mem_heap[h];
+    return sum;
+}
+
+uint64_t vram_driver_budget() {
+    if (!g_memory_budget || !p_vkGetPhysicalDeviceMemoryProperties2) return 0;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+    props.pNext = &budget;
+    p_vkGetPhysicalDeviceMemoryProperties2(g_physical, &props);
+    uint64_t best = 0, size = 0;  // the largest device-local heap (the discrete GPU's VRAM)
+    for (uint32_t h = 0; h < props.memoryProperties.memoryHeapCount; h++)
+        if ((props.memoryProperties.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) &&
+            props.memoryProperties.memoryHeaps[h].size > size)
+            size = props.memoryProperties.memoryHeaps[h].size, best = budget.heapBudget[h];
+    return best;
+}
+
+void vram_log() {
+    static uint64_t next = 0;
+    const uint64_t now = plat::monotonic_ns();
+    if (now < next || !g_real_allocate) return;
+    next = now + 30'000'000'000ull;
+    constexpr double kMB = 1.0 / (1 << 20);
+    std::string held;
+    uint64_t live = 0, allocs = 0, frees = 0, failed = 0;
+    {
+        std::lock_guard lk(g_mem_lock);
+        live = g_mem_live.size(), allocs = g_mem_allocs, frees = g_mem_frees, failed = g_mem_failed;
+        for (uint32_t h = 0; h < g_memory.memoryHeapCount; h++) {
+            char b[96];
+            std::snprintf(b, sizeof b, "%sheap %u%s %.0f MB", h ? ", " : "", h,
+                          (g_memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) ? " (device)" : "",
+                          double(g_mem_heap[h]) * kMB);
+            held += b;
+        }
+    }
+    // Allocated is not in use: a 256 MB block counts whole as long as one image sits in it.
+    const ImageMemoryStats im = image_memory_stats();
+    log("nvn/vk: vram: %llu allocations live (%llu made, %llu freed, %llu failed); allocated by heap: %s; image blocks: "
+        "%llu allocated (%.0f MB), %.0f MB in use by %llu images, %.0f MB free inside them, %llu idle (empty); %llu images "
+        "with their own allocation (%.0f MB)",
+        (unsigned long long)live, (unsigned long long)allocs, (unsigned long long)frees, (unsigned long long)failed,
+        held.c_str(), (unsigned long long)im.blocks, double(im.block_bytes) * kMB, double(im.used_bytes) * kMB,
+        (unsigned long long)im.block_images, double(im.block_bytes - im.used_bytes) * kMB,
+        (unsigned long long)im.idle_blocks, (unsigned long long)im.own_images, double(im.own_bytes) * kMB);
+    // Who holds the live images: textures the game still has (guest keys), pool snapshots (0xE... keys, nvn_objects.cpp)
+    // and kept textures (0xF...). An image only snapshots or kept textures hold is one the game has let go of. Skipped
+    // when the object table is busy (a shared try-lock: never waits on the replay).
+    //
+    // Safe to read: this runs in gpu_present under the GPU lock, which every replay-side write of Texture::image
+    // (image_of, in gpu_submit / gpu_present) also holds; game-thread writes (snapshots, destruction) take the object
+    // table exclusively. The census holds the table shared only while it walks it; sizes are read after.
+    const uint64_t census_t0 = plat::monotonic_ns();
+    if (vram_log_level() < 2) {
+        // the census is NX_VRAM_LOG=2's
+    } else if (objects_lock().try_lock_shared()) {
+        struct Seen {
+            uint32_t who = 0;  // bit 0 game texture, 1 snapshot, 2 kept texture
+            uint64_t sampled = 0;  // the latest draw that sampled it, of any holder
+        };
+        std::unordered_map<const GpuImage*, Seen> seen;
+        uint64_t textures = 0;
+        for (auto& [key, obj] : objects()) {
+            auto* t = dynamic_cast<Texture*>(obj.get());
+            if (!t) continue;
+            textures++;
+            if (!t->image) continue;
+            const uint64_t top = key >> 60;
+            Seen& s = seen[t->image.get()];
+            s.who |= top == 0xE ? 2u : top == 0xF ? 4u : 1u;
+            s.sampled = std::max<uint64_t>(s.sampled, t->last_sampled.load(std::memory_order_relaxed));
+        }
+        objects_lock().unlock_shared();
+        const uint64_t walk_ns = plat::monotonic_ns() - census_t0;
+        uint64_t n[8] = {}, bytes[8] = {};
+        // By kind and by the time since their last sampling draw (up to 10 s, 10-60 s, 1-5 min, older or never).
+        // Rebuildable: only ever uploaded from guest memory. GPU-written (`rendered`) ones hold results nothing else has.
+        uint64_t age_n[2][4] = {}, age_bytes[2][4] = {};
+        for (auto& [img, s] : seen) {
+            const uint64_t size = image_memory_size(img->memory, img->memory_handle);
+            n[s.who]++, bytes[s.who] += size;
+            const uint64_t age = s.sampled && now > s.sampled ? now - s.sampled : UINT64_MAX;
+            const int a = age <= 10'000'000'000ull ? 0 : age <= 60'000'000'000ull ? 1 : age <= 300'000'000'000ull ? 2 : 3;
+            const int k = img->rendered ? 1 : 0;
+            age_n[k][a]++, age_bytes[k][a] += size;
+        }
+        for (int k = 0; k < 2; k++)
+            log("nvn/vk: vram %s by last sampling: <=10 s %llu (%.0f MB), 10-60 s %llu (%.0f MB), 1-5 min %llu (%.0f MB), "
+                "older or never %llu (%.0f MB)",
+                k ? "GPU-written images" : "uploaded images", (unsigned long long)age_n[k][0], double(age_bytes[k][0]) * kMB,
+                (unsigned long long)age_n[k][1], double(age_bytes[k][1]) * kMB, (unsigned long long)age_n[k][2],
+                double(age_bytes[k][2]) * kMB, (unsigned long long)age_n[k][3], double(age_bytes[k][3]) * kMB);
+        log("nvn/vk: vram holders: %llu texture objects; images held by game textures only %llu (%.0f MB), snapshots "
+            "only %llu (%.0f MB), kept textures only %llu (%.0f MB), game textures and copies %llu (%.0f MB), copies of "
+            "both kinds %llu (%.0f MB); census %.2f ms (table held %.2f ms)",
+            (unsigned long long)textures, (unsigned long long)n[1], double(bytes[1]) * kMB, (unsigned long long)n[2],
+            double(bytes[2]) * kMB, (unsigned long long)n[4], double(bytes[4]) * kMB,
+            (unsigned long long)(n[3] + n[5] + n[7]), double(bytes[3] + bytes[5] + bytes[7]) * kMB,
+            (unsigned long long)n[6], double(bytes[6]) * kMB, double(plat::monotonic_ns() - census_t0) / 1e6,
+            double(walk_ns) / 1e6);
+    } else {
+        log("nvn/vk: vram holders: skipped (object table busy)");
+    }
+    supersede_log();  // NX_RELEASE_REPLACED (nvn_supersede.cpp): only when on
+    if (!g_memory_budget || !p_vkGetPhysicalDeviceMemoryProperties2) return;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+    props.pNext = &budget;
+    p_vkGetPhysicalDeviceMemoryProperties2(g_physical, &props);
+    std::string line;
+    for (uint32_t h = 0; h < props.memoryProperties.memoryHeapCount; h++) {
+        char b[128];
+        std::snprintf(b, sizeof b, "%sheap %u: usage %.0f of budget %.0f MB (size %.0f MB)", h ? "; " : "", h,
+                      double(budget.heapUsage[h]) * kMB, double(budget.heapBudget[h]) * kMB,
+                      double(props.memoryProperties.memoryHeaps[h].size) * kMB);
+        line += b;
+    }
+    log("nvn/vk: vram budget (driver): %s", line.c_str());
 }
 
 }  // namespace nx::nvn

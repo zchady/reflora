@@ -10,6 +10,7 @@
 #include <nx/runtime.h>
 
 #include "kernel.h"
+#include "nvn/nvn_astc_bc7.h"
 #include "platform.h"
 
 namespace nx {
@@ -191,7 +192,12 @@ void boot() {
     if (plat::setting("trace") == "1") g_trace = true;
     memory_init();
     kernel_init();
+    // NX_KERNEL_SELFTEST=cv: the condvar svcs against nn::os's protocol on host threads, then exit (0: passed)
+    if (const char* k = std::getenv("NX_KERNEL_SELFTEST")) plat::exit_process(kernel_selftest(k));
     load_modules(g_module_list, g_module_count, plat::data_root() + "/analysis");
+    // NX_ASTC_BC7_PREPARE=1: the BC7 cache filled from the game's package, then exit (the block sizes come from the
+    // SDK's format table, so after the modules are loaded; nvn_astc_bc7_prepare.cpp)
+    if (const char* p = std::getenv("NX_ASTC_BC7_PREPARE"); p && p[0] == '1') plat::exit_process(nvn::astc_bc7_prepare());
     const ModuleInfo& nx_module_main = module_named("main");
 
     uint64_t tdata = 0, tdata_end = 0;

@@ -8,7 +8,15 @@
 #include <cstdlib>
 #include <cstring>
 
+#ifdef NX_BC_STANDALONE  // tests/bc7_test.cpp: the decoders alone (bc_decode), without the Vulkan side
+#include <cstdint>
+namespace nx::nvn {
+void bc_decode(uint32_t nvn_format, const uint8_t* blocks, uint32_t width, uint32_t height, uint32_t slices,
+               uint8_t* out);
+}
+#else
 #include "nvn_vk.h"
+#endif
 
 namespace nx::nvn {
 
@@ -193,6 +201,7 @@ Kind kind(uint32_t nvn) {
 
 }  // namespace
 
+#ifndef NX_BC_STANDALONE
 bool bc_view_format(const GpuImage& img, uint32_t nvn, VkFormat& out) {
     if (!bc_host_decode(img.nvn_format)) return false;
     // A view of a decoded image: the decoded format of the view's BC format when it decodes to the same texel size
@@ -219,6 +228,7 @@ VkFormat bc_decoded_format(uint32_t nvn_format) {
         default: return srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
     }
 }
+#endif
 
 uint32_t bc_decoded_bytes(uint32_t nvn_format) {
     Kind k = kind(nvn_format);

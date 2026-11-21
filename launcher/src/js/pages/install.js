@@ -99,7 +99,10 @@ export function mountInstall(root, actions) {
       // overall
       const active = prep.steps.find((s) => s.status === "active");
       const idx = active ? prep.steps.indexOf(active) : -1;
-      const installed = view.phase === "ready" || view.phase === "running";
+      // while the BC7 textures are prepared (Settings) the phase is "preparing", but the installation stays as it is
+      const texturesRun = Boolean(state.texturesRun?.active);
+      const installed = view.phase === "ready" || view.phase === "running"
+        || (texturesRun && install?.status.kind === "ready");
       const gv = graphicsView(prep, install?.graphics, installed);
       const optimized = gv.status === "done";
       let label;
@@ -148,7 +151,7 @@ export function mountInstall(root, actions) {
       }
       startButton.hidden = prep.active;
       startButton.disabled = !(view.canPrepare || (installed && install?.configured_nup)) || v.status === "checking"
-        || view.phase === "running";
+        || view.phase === "running" || texturesRun;
       stopButton.hidden = !prep.active;
       logButton.hidden = !(prep.active || prep.outcome || install?.workspace_exists);
       setText(actionError, view.toolsError ? T.errors[view.toolsError] ?? view.toolsError : state.actionError ?? "");

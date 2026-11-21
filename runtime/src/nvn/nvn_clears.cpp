@@ -138,13 +138,14 @@ bool clears_transfer(VkCommandBuffer cb, const Targets& t) {
     GpuImage* imgs[9] = {};
     for (uint32_t k = 0; k < t.color_count; k++) {
         if (!(g_pending.colors >> k & 1)) continue;
-        GpuImage* img = t.colors[k] ? image_of(t.colors[k]) : nullptr;
+        // target_image: one level or layer is cleared, the others keep their contents (NX_VRAM_EVICT rebuilds)
+        GpuImage* img = t.colors[k] ? target_image(cb, t.colors[k]) : nullptr;
         if (!img) continue;
         if (img->view_type == VK_IMAGE_VIEW_TYPE_3D || view_format(*img, t.views.format[k]) != img->format) return false;
         imgs[k] = img;
     }
     if (g_pending.ds) {
-        GpuImage* d = t.depth ? image_of(t.depth) : nullptr;
+        GpuImage* d = t.depth ? target_image(cb, t.depth) : nullptr;
         if (d && (d->aspect & g_pending.ds) != g_pending.ds) return false;
         imgs[8] = d;
     }
@@ -251,6 +252,15 @@ void draw_clear(VkCommandBuffer cb, const Targets& t, const Cmd& c) {
         rect.offset.x || rect.offset.y || rect.extent.width < full.width || rect.extent.height < full.height;
     bool masked = color && !no_mask && (c.mask & 0xF) != 0xF;
     g_scissored += scissored, g_masked += masked;
+    // NX_RELEASE_REPLACED: a whole clear writes every byte of the target's level 0. Whole under either reading of NVN's
+    // clears: every channel, and the bound scissor (if any) covering the whole target, whatever NX_CLEARS_SCISSOR says.
+    if (release_replaced_on() && !scissored && (!color || (c.mask & 0xF) == 0xF)) {
+        const int32_t* s = replay::g_state.scissor;
+        const bool whole = !replay::g_state.has_scissor ||
+                           (s[0] <= 0 && s[1] <= 0 && int64_t(s[0]) + s[2] >= int64_t(full.width) &&
+                            int64_t(s[1]) + s[3] >= int64_t(full.height));
+        if (whole) supersede_note_full_clear(guest, *img, level, a.aspectMask);
+    }
     if (!transfer && !eager && !scissored && !masked && !pass_open_on(t)) {
         VkExtent2D e = targets_extent(t);
         if (full.width <= e.width && full.height <= e.height) {  // the pass covers it: a loadOp can clear it

@@ -59,7 +59,37 @@ float equal_slack_units() {
     static const float units = env ? float(std::atof(env)) : 4.0f;
     return units;
 }
+// The slack's slope term, per unit of slack. Wonder 2's world map draws its grass layer with EQUAL just below the sand
+// (scene depths ~0.002, orthographic): any slope term let the grass through in whole mesh tiles, green blocks with
+// straight edges over Petal Isles' sand. The units alone are a few ulps of depth in D32 float, which is what two vertex
+// shaders a few ulps apart need. The term stays where it was introduced (Metal) and on Android until checked there.
+// NX_EQUAL_SLACK_SLOPE=<per unit>: overrides (0.25 is the old term).
+float equal_slack_slope() {
+    static const char* env = std::getenv("NX_EQUAL_SLACK_SLOPE");
+#if defined(__APPLE__) || defined(__ANDROID__)
+    static const float slope = env ? float(std::atof(env)) : 0.25f;
+#else
+    static const float slope = env ? float(std::atof(env)) : 0.0f;
+#endif
+    return slope;
+}
 }  // namespace
+
+// NVN applies SetPolygonOffsetClamp's values only to the polygon modes PolygonOffsetEnable turned on; with the bias
+// enabled only for the slack, a game's values set but disabled must not ride along (Petal Isles' colour pass carries a
+// disabled -1/-1, which alone let the grass layer over the sand). NX_DISABLED_BIAS_APPLIES=1: the old behaviour.
+bool game_bias_applies(const PolygonInfo& p) {
+    static const bool old = [] {
+        const char* e = std::getenv("NX_DISABLED_BIAS_APPLIES");
+#if defined(__APPLE__) || defined(__ANDROID__)
+        return !(e && e[0] == '0');  // unchanged there until checked on those GPUs
+#else
+        return e && e[0] == '1';
+#endif
+    }();
+    const uint32_t bit = p.mode <= 2 ? 1u << p.mode : 4u;  // POINT 1, LINE 2, FILL 4 (nvn_pipeline_state.cpp)
+    return old || (p.offset_enables & bit) != 0;
+}
 
 // The colour pass after a pre-pass tests EQUAL (taken as LESS_OR_EQUAL, nvn_pipeline.cpp) against depth another
 // vertex shader wrote: Metal compiles the two apart, and where the colour pass lands a few ulps behind, the pixel
@@ -140,9 +170,10 @@ void raster_dynamic(VkCommandBuffer cb, bool slack) {
     static const char* scale_env = std::getenv("NX_DEPTH_BIAS_UNITS");
     static const float units_scale = scale_env ? float(std::atof(scale_env)) : 1.0f;
     // A non-zero clamp needs the depthBiasClamp feature (MoltenVK has it: Metal's setDepthBias clamp).
-    float clamp = vk_features().depthBiasClamp ? s.bias_clamp : 0.0f;
-    float units = s.bias_units * units_scale, factor = s.bias_factor;
-    if (slack) units -= equal_slack_units(), factor -= equal_slack_units() / 4.0f, clamp = 0.0f;
+    const bool game = game_bias_applies(s.polygon);
+    float clamp = game && vk_features().depthBiasClamp ? s.bias_clamp : 0.0f;
+    float units = game ? s.bias_units * units_scale : 0.0f, factor = game ? s.bias_factor : 0.0f;
+    if (slack) units -= equal_slack_units(), factor -= equal_slack_units() * equal_slack_slope(), clamp = 0.0f;
     p_vkCmdSetDepthBias(cb, units, clamp, factor);
 }
 

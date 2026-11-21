@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "nvn_astc_bc7.h"
 #include "nvn_pipeline.h"
 #include "nvn_vk.h"
 
@@ -74,6 +75,14 @@ void replay_copy(VkCommandBuffer cb, const Cmd& c, const CmdList& list) {
     GpuImage* src = ensure_contents(cb, c.a[0]);
     GpuImage* dst = ensure_contents(cb, c.a[1]);
     if (!src || !dst) return;
+    // NX_ASTC_BC7: a copy into or out of a BC7 image (never seen) is made with both as RGBA8, as without BC7
+    if (src->astc_bc7 || dst->astc_bc7) {
+        if (src->astc_bc7) image_remake_rgba8(c.a[0], "copy");
+        if (dst->astc_bc7) image_remake_rgba8(c.a[1], "copy");
+        src = ensure_contents(cb, c.a[0]);
+        dst = ensure_contents(cb, c.a[1]);
+        if (!src || !dst) return;
+    }
     bool same = src == dst;
     static const bool no_same = std::getenv("NX_COPY_NO_SAME_IMAGE") != nullptr;  // bisecting: the old way
     if (same && no_same) return;

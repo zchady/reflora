@@ -42,6 +42,7 @@ std::vector<std::unique_ptr<Block>> g_blocks;
 std::unordered_map<uint64_t, Range> g_ranges;  // by handle
 uint64_t g_next_handle = 0;
 uint64_t g_block_allocs = 0, g_dedicated = 0;
+std::unordered_map<VkDeviceMemory, VkDeviceSize> g_own;  // live images with an allocation of their own (stats)
 
 bool blocks_on() {
     static const bool on = [] {
@@ -119,12 +120,42 @@ bool image_memory_alloc(const VkMemoryRequirements& req, ImageMemory& out) {
     g_dedicated++;
     VkResult r = p_vkAllocateMemory(vk_device(), &ai, nullptr, &out.memory);
     if (r != VK_SUCCESS) log("nvn/vk: vkAllocateMemory of %llu MB for an image failed (%d)", (unsigned long long)(req.size >> 20), int(r));
+    if (r == VK_SUCCESS) {
+        std::lock_guard lk(g_lock);
+        g_own[out.memory] = req.size;
+    }
     return r == VK_SUCCESS;
+}
+
+ImageMemoryStats image_memory_stats() {
+    std::lock_guard lk(g_lock);
+    ImageMemoryStats s;
+    s.blocks = g_blocks.size(), s.block_bytes = g_blocks.size() * kBlockSize, s.block_images = g_ranges.size();
+    for (auto& b : g_blocks) s.used_bytes += b->used, s.idle_blocks += b->used == 0;
+    s.own_images = g_own.size();
+    for (auto& [m, size] : g_own) s.own_bytes += size;
+    return s;
+}
+
+VkDeviceSize image_memory_size(VkDeviceMemory memory, uint64_t handle) {
+    std::lock_guard lk(g_lock);
+    if (handle) {
+        auto it = g_ranges.find(handle);
+        return it == g_ranges.end() ? 0 : it->second.size;
+    }
+    auto it = g_own.find(memory);
+    return it == g_own.end() ? 0 : it->second;
 }
 
 void image_memory_free(VkDeviceMemory memory, uint64_t handle) {
     if (!handle) {
-        if (memory) p_vkFreeMemory(vk_device(), memory, nullptr);
+        if (memory) {
+            {
+                std::lock_guard lk(g_lock);
+                g_own.erase(memory);
+            }
+            p_vkFreeMemory(vk_device(), memory, nullptr);
+        }
         return;
     }
     std::lock_guard lk(g_lock);

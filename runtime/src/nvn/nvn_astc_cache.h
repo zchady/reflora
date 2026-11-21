@@ -36,6 +36,11 @@ void astc_predecode(uint64_t guest);
 bool astc_cache_take(uint64_t memory, uint32_t format, uint32_t width, uint32_t height, uint32_t layers,
                      uint32_t levels, uint32_t bh0, uint64_t hash, std::vector<uint8_t>& rgba,
                      std::vector<LinearLevel>& levels_out);
+// NX_ASTC_BC7 (nvn_astc_bc7.h): the BC7 blocks a background worker loaded from the cache for exactly this texture
+// (the worker reads an accepted conversion instead of decoding).
+bool astc_cache_take_bc7(uint64_t memory, uint32_t format, uint32_t width, uint32_t height, uint32_t layers,
+                         uint32_t levels, uint32_t bh0, uint64_t hash, std::vector<uint8_t>& blocks,
+                         std::vector<LinearLevel>& levels_out);
 uint64_t texture_hash(const uint8_t* p, uint64_t n);
 // nvn_upload.cpp: untiled ASTC blocks of every level -> RGBA8. foreground: on the replay thread (counted as its
 // host work and in the hitch attribution); false: a background decode.

@@ -9,7 +9,7 @@ import {
   chooseAvatar, chooseLanguage, chooseNup, chooseWorkspace, connectPreparer, deleteAvatar, derive, importAvatar,
   importButtonFont, loadAppInfo, loadPlayerSettings, navigate, openPreparationLog, playGame, refreshAvatars,
   refreshButtonFont, refreshInstallation, refreshSaves, removeButtonFont, savePlayerName, startPreparation,
-  stopPreparation, store, verifyNup,
+  stopPreparation, store, verifyNup, refreshTextures, setBc7Textures, prepareTextures,
 } from "./state/app-state.js";
 import { T } from "./strings.js";
 import { mountSidebar, mountTitlebar } from "./ui/shell.js";
@@ -38,12 +38,15 @@ const PAGE_MOUNTS = {
     onRefreshAvatars: refreshAvatars, onImportAvatar: importAvatar, onChooseAvatar: chooseAvatar,
     onRemoveAvatar: deleteAvatar,
     onRefreshButtonFont: refreshButtonFont, onImportButtonFont: importButtonFont, onRemoveButtonFont: removeButtonFont,
+    onRefreshTextures: refreshTextures, onBc7Textures: setBc7Textures, onPrepareTextures: prepareTextures,
+    onStopTextures: stopPreparation,
   }),
   about: (root) => mountAbout(root),
 };
 
 // Closing while preparing stops the preparation (it continues next time): ask first.
-const confirmClose = () => !store.get().prep.active || window.confirm(T.install.progress.confirmClose);
+const confirmClose = () => !(store.get().prep.active || store.get().texturesRun?.active)
+  || window.confirm(T.install.progress.confirmClose);
 
 let shown = { page: null, lang: null };
 let sidebar = null;

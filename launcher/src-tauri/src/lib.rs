@@ -210,7 +210,77 @@ fn launch_game(state: State<'_, AppState>) -> Result<u32, String> {
     }
     let _ = avatars::apply_to_workspace(&ws.path, state.chosen_avatar().as_deref());
     let _ = state.button_font.apply_to_workspace(&ws.path);
-    state.game.launch(&ws.path, s.player_name.as_deref())
+    state.game.launch(&ws.path, s.player_name.as_deref(), s.bc7_textures)
+}
+
+// ---- experimental BC7 textures (NX_ASTC_BC7, off by default) ---------------------------------------------------------
+
+/// The texture preparation's record (written by the preparer's optional `textures` step).
+const TEXTURES_STATE: &str = "textures.json";
+
+#[derive(Serialize)]
+struct TexturesInfo {
+    /// The player's choice: the game starts with NX_ASTC_BC7=1.
+    enabled: bool,
+    /// work\textures.json of the last texture preparation (status, accepted, cache_bytes, finished, reason), if any.
+    last: Option<serde_json::Value>,
+    /// The game is installed, so its textures can be prepared.
+    can_prepare: bool,
+    /// The last preparation finished for the game installed now (its bin\wonder2.exe, by size and time): nothing to
+    /// prepare again. False after an update rebuilt the game, or for a record written before the step kept them.
+    ready: bool,
+}
+
+/// Whether `last` (work\textures.json) is a finished preparation of this exact executable.
+fn textures_ready(last: Option<&serde_json::Value>, exe: &Path) -> bool {
+    let Some(last) = last else { return false };
+    let Ok(meta) = std::fs::metadata(exe) else { return false };
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    last.get("status").and_then(|s| s.as_str()) == Some("ok")
+        && last.get("exe_size").and_then(|v| v.as_u64()) == Some(meta.len())
+        && last.get("exe_mtime").and_then(|v| v.as_u64()).is_some_and(|m| Some(m) == mtime)
+}
+
+#[tauri::command]
+fn textures_info(state: State<'_, AppState>) -> TexturesInfo {
+    let ws = state.workspace().path;
+    let last = std::fs::read_to_string(ws.join("work").join(TEXTURES_STATE))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok());
+    let report = install::inspect(&ws, state.settings.get().nup_path.as_deref(), state.game.is_running());
+    let can_prepare = matches!(report.status, install::Status::Ready | install::Status::Running);
+    let ready = can_prepare && textures_ready(last.as_ref(), &ws.join("bin").join("wonder2.exe"));
+    TexturesInfo { enabled: state.settings.get().bc7_textures, last, can_prepare, ready }
+}
+
+/// Takes effect the next time the game starts.
+#[tauri::command]
+fn set_bc7_textures(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    state.settings.update(|s| s.bc7_textures = enabled).map_err(|e| e.to_string())
+}
+
+/// The preparer's `textures` step alone (the BC7 cache in <workspace>\data\astc_bc7_cache, from the player's own
+/// package), followed through the same events as a preparation; stopping it keeps what is done.
+#[tauri::command]
+fn prepare_textures(window: tauri::Window, state: State<'_, AppState>) -> Result<(), String> {
+    state.idle()?;
+    let ws = state.workspace().path;
+    let report = install::inspect(&ws, state.settings.get().nup_path.as_deref(), false);
+    if !matches!(report.status, install::Status::Ready) {
+        return Err("not_ready".into());
+    }
+    let last = std::fs::read_to_string(ws.join("work").join(TEXTURES_STATE))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    if textures_ready(last.as_ref(), &ws.join("bin").join("wonder2.exe")) {
+        return Err("textures_ready".into()); // done for this game: nothing to redo
+    }
+    let spec = state.spec(Some("textures"))?;
+    state.preparer.start(window, spec)
 }
 
 #[tauri::command]
@@ -404,7 +474,10 @@ pub fn run() {
             remove_avatar,
             button_font_status,
             import_button_font,
-            remove_button_font
+            remove_button_font,
+            textures_info,
+            set_bc7_textures,
+            prepare_textures
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {
@@ -417,6 +490,26 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn textures_ready_only_for_the_same_finished_executable() {
+        let d = std::env::temp_dir().join(format!("reflora-test-textures-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let exe = d.join("wonder2.exe");
+        std::fs::write(&exe, b"game").unwrap();
+        let m = std::fs::metadata(&exe).unwrap();
+        let mtime = m.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let rec = |status: &str, size: u64, mtime: u64| {
+            serde_json::json!({ "status": status, "exe_size": size, "exe_mtime": mtime })
+        };
+        assert!(textures_ready(Some(&rec("ok", 4, mtime)), &exe));
+        assert!(!textures_ready(Some(&rec("partial", 4, mtime)), &exe), "not finished");
+        assert!(!textures_ready(Some(&rec("ok", 5, mtime)), &exe), "another executable (size)");
+        assert!(!textures_ready(Some(&rec("ok", 4, mtime + 60)), &exe), "another executable (time)");
+        assert!(!textures_ready(Some(&serde_json::json!({ "status": "ok" })), &exe), "record of an older preparer");
+        assert!(!textures_ready(None, &exe));
+        assert!(!textures_ready(Some(&rec("ok", 4, mtime)), &d.join("missing.exe")));
+    }
 
     #[test]
     fn workspace_choice_never_mixes_with_other_files() {

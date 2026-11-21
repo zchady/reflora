@@ -2,7 +2,9 @@
 //
 //   astc_test --selftest
 //       void-extent blocks (LDR colour, HDR -> error colour), reserved block modes -> error colour, and a sweep of
-//       random blocks through every block size (no crash, every texel written).
+//       random blocks through every block size (no crash, every texel written), and a digest of the decode of a
+//       fixed set of blocks: when it changes, the decoder's output changed, so kAstcDecoderVersion (nvn_astc.h) must
+//       be bumped (NX_ASTC_BC7's cache is judged against this decode) and the digest updated.
 //   astc_test <blocks.bin> <width> <height> <bw> <bh> <srgb 0|1> <out.rgba>
 //       decodes a linear run of blocks (tiling_test output) to RGBA8; tests/astc_check.py compares it with an
 //       independent decoder on the game's own textures.
@@ -17,6 +19,7 @@
 
 using nx::nvn::astc_decode_block;
 using nx::nvn::astc_decode_image;
+using nx::nvn::kAstcDecoderVersion;
 
 namespace {
 
@@ -83,6 +86,19 @@ int selftest() {
     }
     expect(astc_decode_image(blocks.data(), 7, 5, 1, 4, 4, false, img.data()) == 0, "image decodes");
     expect(img[(4 * 7 + 6) * 4] == 0x40, "bottom-right texel comes from the fourth block");
+    // The decode of a fixed set of blocks (every footprint, both modes), as one digest (see the header).
+    constexpr uint64_t kDigest = 0x1bc3a924eb936147ull;  // decoder version 1
+    uint64_t digest = 0xcbf29ce484222325ull;
+    std::mt19937 fixed(20261121);
+    for (const auto& s : sizes)
+        for (int k = 0; k < 2000; k++) {
+            for (uint8_t& v : block) v = uint8_t(fixed());
+            astc_decode_block(block, uint32_t(s[0]), uint32_t(s[1]), (k & 1) != 0, out);
+            for (int i = 0; i < s[0] * s[1] * 4; i++) digest = (digest ^ out[i]) * 0x100000001b3ull;
+        }
+    std::printf("astc_test: decode digest %016llx (decoder version %u)\n", (unsigned long long)digest,
+                kAstcDecoderVersion);
+    expect(digest == kDigest, "the decoder's output changed: bump kAstcDecoderVersion and update the digest");
     std::printf("astc_test: %s\n", g_failed ? "FAILED" : "all passed");
     return g_failed ? 1 : 0;
 }

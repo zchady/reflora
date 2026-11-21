@@ -40,7 +40,8 @@ Steps (in order; each one is skipped when its outputs are already there, unless 
 Machine-readable lines for the launcher: "STEP <i>/<n> <name> <message>", "GROUP <i>/<n> <group> ...", "PROGRESS
 <0-100>" (always progress inside the current step; 100 when it ends), "COUNT <done>/<total> <unit>" (what the step
 counts: the graphics step's pipelines), "LOG <text>", "WARN <text>", "ERROR <text>",
-"RESULT graphics <ok|partial|failed|skipped> made=<n> failed=<n> total=<n> compute=<n> seconds=<s>" and "DONE". Exit code 0 on success, 2 when a step needs the user (a missing tool, an untested build, no AVX2, no
+"RESULT graphics <ok|partial|failed|skipped> made=<n> failed=<n> total=<n> compute=<n> seconds=<s>", "RESULT textures
+<ok|partial|failed|skipped> converted=<n> accepted=<n> kept=<n> seconds=<s>" (the optional textures step) and "DONE". Exit code 0 on success, 2 when a step needs the user (a missing tool, an untested build, no AVX2, no
 disk). A whole preparation (all the steps) writes work/prepared.json once the check step passed (the game is playable)
 and again at DONE; starting one removes it.
 """
@@ -57,6 +58,8 @@ TESTED_BUILD_ID = "ec47e6f8846d2a7b6892e2682845c7255f7117ae"
 MODULES = {"main": "0x4000000000", "sdk": "0x4010000000", "subsdk0": "0x4012000000"}
 HLE_LIST = {"sdk": os.path.join(REPO, "games", "wonder2", "hle_internal.txt")}
 STEPS = ["verify", "extract", "bins", "recompile", "shaders", "build", "config", "check", "graphics"]
+# Run only when named in --steps: the BC7 texture cache, for NX_ASTC_BC7 (off by default).
+OPTIONAL_STEPS = ["textures"]
 PREPARED_MARKER = "prepared.json"  # in work/: written when a whole preparation reaches DONE, removed when one starts
 # A whole preparation writes the marker as soon as this step passed (the game is playable from there) and again at
 # DONE: stopping it or failing in the graphics step, an optimization, never takes "ready" away.
@@ -638,6 +641,142 @@ def run_graphics(a, ws, exe, data):
     return facts
 
 
+# ---- textures (optional): the ASTC -> BC7 cache for NX_ASTC_BC7 (off by default) -------------------------------------
+#
+# The runtime does the work (runtime/src/nvn/nvn_astc_bc7_prepare.cpp, NX_ASTC_BC7_PREPARE=1): it reads every ASTC
+# texture of the package, converts and judges it into data/astc_bc7_cache (verdicts already there are skipped, so a
+# stopped run continues) and exits. A game started with NX_ASTC_BC7=1 then keeps the accepted ones as BC7 instead of
+# RGBA8 from its first session. An optimization of an optional mode: it never fails the preparation. A few minutes on
+# a desktop CPU and about 3 GB of cache for the whole game.
+
+TEXTURES_STATE = "textures.json"   # in work/
+TEXTURES_CACHE = "astc_bc7_cache"  # in data/
+TEXTURES_MARK = b"NX_ASTC_BC7_PREPARE"
+TEXTURES_START_LIMIT = 120  # seconds for the runtime to report the package's files
+
+
+def folder_size(path):
+    total = files = 0
+    try:
+        with os.scandir(path) as it:
+            for e in it:
+                if e.is_file():
+                    total, files = total + e.stat().st_size, files + 1
+    except OSError:
+        pass
+    return files, total
+
+
+def write_textures_state(ws, state):
+    import json
+    path = os.path.join(ws, "work", TEXTURES_STATE)
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=1)
+    os.replace(path + ".tmp", path)
+
+
+def step_textures(a, ws):
+    import time
+    exe = os.path.join(ws, "bin", "wonder2.exe")
+    if not os.path.isfile(exe):
+        raise NeedsUser("bin/wonder2.exe is missing: run the build step first")
+    state = {"format": 1, "status": "failed", "finished": None, "reason": "interrupted before it finished"}
+    write_textures_state(ws, state)
+    try:
+        state.update(run_textures(a, ws, exe, os.path.join(ws, "data")))
+        if state["status"] == "ok":
+            state.pop("reason", None)
+    except Exception as e:  # noqa: BLE001 - an optimization: the installation stays playable
+        state.update(status="failed", reason=f"{type(e).__name__}: {e}")
+    state["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    write_textures_state(ws, state)
+    say("RESULT", f"textures {state['status']} converted={state.get('converted', 0)} accepted={state.get('accepted', 0)} "
+                  f"kept={state.get('kept', 0)} seconds={state.get('seconds', 0)}")
+    if state["status"] != "ok":
+        say("WARN", f"texture preparation {state['status']}: {state.get('reason', '')} (with NX_ASTC_BC7=1 the game "
+                    "converts what is missing while it plays, for the next session)")
+
+
+def run_textures(a, ws, exe, data):
+    """The runtime in its BC7 preparation mode; returns the facts for work/textures.json."""
+    import mmap
+    import time
+    with open(exe, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as m:
+        if m.find(TEXTURES_MARK) < 0:
+            return {"status": "skipped", "reason": "the executable predates the texture preparation (run the build "
+                                                   "step to rebuild it)"}
+    log = os.path.join(ws, "work", "textures.log")
+    if os.path.isfile(log):
+        os.remove(log)
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("NX_")}  # no measurement switch leaks in
+    env.update(NX_DATA_ROOT=data, NX_HEADLESS="1", NX_MUTE="1", NX_LOG=log, NX_ASTC_BC7_PREPARE="1",
+               NX_ASTC_BC7_PREPARE_THREADS=str(a.texture_jobs))
+    flags = 0x4000 if sys.platform == "win32" else 0  # BELOW_NORMAL_PRIORITY_CLASS: the PC stays usable
+    t0 = time.time()
+    p = subprocess.Popen([exe], cwd=os.path.dirname(exe), env=env, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, creationflags=flags)
+    facts = {"converted": 0, "accepted": 0, "kept": 0, "already": 0, "files": 0}
+    started = finished = False
+    seen, last_pct, reason = 0, -1, ""
+    cpu = peak = None
+    while True:
+        exited = p.poll() is not None
+        if os.path.isfile(log):
+            with open(log, encoding="utf-8", errors="replace") as f:
+                f.seek(seen)
+                chunk = f.read()
+                seen = f.tell()
+            for line in chunk.splitlines():
+                if m := re.search(r"astc bc7 prepare: (\d+) files", line):
+                    facts["files"], started = int(m[1]), True
+                    say("LOG", line)
+                    say("COUNT", f"0/{m[1]} files")
+                elif m := re.search(r"astc bc7 prepare: progress (\d+)/(\d+)", line):
+                    pct = int(m[1]) * 100 // max(1, int(m[2]))
+                    if pct != last_pct:
+                        say("PROGRESS", str(min(99, pct)))
+                        say("COUNT", f"{m[1]}/{m[2]} files")
+                        last_pct = pct
+                elif m := re.search(r"astc bc7 prepare: done .*converted (\d+) .*accepted (\d+), kept RGBA8 (\d+), .*"
+                                    r"already in the cache (\d+)", line):
+                    facts.update(converted=int(m[1]), accepted=int(m[2]), kept=int(m[3]), already=int(m[4]))
+                    finished = True
+                    say("LOG", line)
+                elif "astc bc7 prepare: no package" in line or "cannot use the cache folder" in line:
+                    say("LOG", line.split("nvn/vk: ", 1)[-1])
+        c, pk = process_usage(int(p._handle)) if sys.platform == "win32" else (None, None)
+        cpu, peak = c if c is not None else cpu, max(peak or 0, pk or 0) or peak
+        if exited:
+            break
+        elapsed = time.time() - t0
+        if elapsed > a.textures_timeout or (not started and elapsed > TEXTURES_START_LIMIT):
+            reason = (f"no answer from the runtime after {elapsed:.0f} s" if not started else
+                      f"stopped after {a.textures_timeout} s (run the step again: it continues)")
+            p.kill()
+            p.wait()
+            break
+        time.sleep(0.25)
+    code = p.wait()
+    files, size = folder_size(os.path.join(data, TEXTURES_CACHE))
+    status = "failed" if reason else "ok" if code == 0 and finished else "partial" if code == 5 else "failed"
+    if not reason and status != "ok":
+        reason = {3: "no package or no cache folder", 5: "some verdicts could not be written (disk full?)"}.get(
+            code, f"the runtime exited with {code}")
+    st = os.stat(exe)  # which game the cache was prepared for: the launcher offers it again only for another one
+    facts.update(status=status, exit_code=code, seconds=round(time.time() - t0, 1), exe_size=st.st_size,
+                 exe_mtime=int(st.st_mtime),
+                 cpu_seconds=round(cpu, 1) if cpu is not None else None,
+                 peak_memory_mb=round(peak / 2**20) if peak else None, threads=a.texture_jobs, cache_files=files,
+                 cache_bytes=size)
+    if reason:
+        facts["reason"] = reason
+    say("LOG", f"textures: {status} in {facts['seconds']} s (exit {code}); converted {facts['converted']} (accepted "
+               f"{facts['accepted']}, kept RGBA8 {facts['kept']}), {facts['already']} already there; CPU "
+               f"{facts['cpu_seconds']} s; peak memory {facts['peak_memory_mb']} MB; cache {files} files "
+               f"({size / 2**30:.2f} GB)")
+    return facts
+
+
 def step_config(a, ws):
     os.makedirs(os.path.join(ws, "data", "user"), exist_ok=True)
     with open(os.path.join(ws, "data", "nup.txt"), "w", encoding="utf-8") as f:
@@ -681,12 +820,16 @@ def main():
                     help="threads compiling pipelines in the graphics step (default: logical CPUs - 2, at most 8)")
     ap.add_argument("--graphics-timeout", type=int, default=600,
                     help="seconds before the graphics step gives up (default 600)")
+    ap.add_argument("--texture-jobs", type=int, default=max(1, min(16, (os.cpu_count() or 4) - 2)),
+                    help="threads converting in the optional textures step (default: logical CPUs - 2, at most 16)")
+    ap.add_argument("--textures-timeout", type=int, default=3600,
+                    help="seconds before the textures step stops (default 3600; run it again, it continues)")
     ap.add_argument("--graphics-salt", help="development only: NX_SPIRV_SALT for the graphics step (a cold-driver "
                                             "measurement, not a normal preparation)")
     a = ap.parse_args()
     a.modules = [m for m in a.modules.split(",") if m]
     steps = [s for s in a.steps.split(",") if s]
-    bad = [s for s in steps + a.modules if s not in STEPS and s not in MODULES]
+    bad = [s for s in steps + a.modules if s not in STEPS + OPTIONAL_STEPS and s not in MODULES]
     if bad:
         say("ERROR", "unknown step or module: " + ", ".join(bad))
         return 1
@@ -700,7 +843,7 @@ def main():
     if not os.path.isfile(mark):
         with open(mark, "w", encoding="utf-8") as f:
             f.write("Workspace of tools/prepare_switch2.py: holds data derived from the user's own game files.\n")
-    funcs = {s: globals()["step_" + s] for s in STEPS}
+    funcs = {s: globals()["step_" + s] for s in STEPS + OPTIONAL_STEPS}
     full = steps == STEPS
     marker = os.path.join(ws, "work", PREPARED_MARKER)
     if full and os.path.isfile(marker):

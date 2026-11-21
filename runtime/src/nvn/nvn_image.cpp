@@ -5,6 +5,9 @@
 #include <memory>
 #include <tuple>
 
+#include "nvn_astc_bc7.h"
+#include "nvn_astc_cache.h"
+#include "nvn_pipeline.h"
 #include "nvn_vk.h"
 
 namespace nx::nvn {
@@ -80,6 +83,15 @@ std::map<StorageKey, std::weak_ptr<GpuImage>> g_live_images;
 GpuImage* image_of(uint64_t guest) {
     Texture* t = get<Texture>(guest);
     if (!t) return nullptr;
+    // An image the VRAM eviction gave back (NX_VRAM_EVICT, nvn_frames.cpp) is made again, from guest memory.
+    bool rebuild = false;
+    if (t->image && t->image->evicted) t->image.reset(), rebuild = true;
+    // NX_RELEASE_REPLACED: a render target whose memory was given back (its bytes overwritten on the console) is made
+    // again, as a new target: begun cleared
+    if (t->image && t->image->superseded) supersede_note_remade(*t->image), t->image.reset();
+    // NX_ASTC_BC7: a BC7 image something could not use (image_remake_rgba8) is made again as RGBA8; this holder's
+    // reference goes to the grave, which frees the image once no submit can use it
+    if (t->image && t->image->bc7_demoted) bury_image(std::move(t->image));
     if (t->image) return t->image.get();
     uint32_t swizzle = uint32_t(t->swizzle[0]) | uint32_t(t->swizzle[1]) << 8 | uint32_t(t->swizzle[2]) << 16 |
                   uint32_t(t->swizzle[3]) << 24;
@@ -94,8 +106,8 @@ GpuImage* image_of(uint64_t guest) {
     bool widened = t->format == 0x1 && t->pool_swizzle == 0x02010101u;
     if (share && t->memory && (old_rule ? t->pool_swizzle == 0 : !widened))
         if (auto it = g_live_images.find(key); it != g_live_images.end())
-            if (auto shared = it->second.lock(); shared && shared->image && !shared->alpha_from_r &&
-                                                 (shared->pool_serial == t->pool_serial ||
+            if (auto shared = it->second.lock(); shared && shared->image && !shared->evicted && !shared->alpha_from_r &&
+                                                 !shared->bc7_demoted && (shared->pool_serial == t->pool_serial ||
                                                   !stale_image("share", *shared, *t, 0))) {
                 static uint64_t shares = 0;
                 if (++shares % 1000 == 1) log("nvn/vk: %llu textures shared an image with another", (unsigned long long)shares);
@@ -108,6 +120,10 @@ GpuImage* image_of(uint64_t guest) {
     img->format = bc_host_decode(t->format) ? bc_decoded_format(t->format) : vk_format(t->format);  // nvn_bc.cpp
     img->nvn_format = t->format;
     img->pool_serial = t->pool_serial;
+    img->target_flag = (t->flags & 0x8) != 0;
+    img->rebuilt = rebuild;
+    img->guest_memory = t->memory, img->guest_bytes = t->storage_size;  // NX_RELEASE_REPLACED's coverage test
+    img->last_used = plat::monotonic_ns();  // made for a use: not idle from birth
     static uint64_t ids = 0;
     img->id = ++ids;
     if (t->format == 0x1 && t->pool_swizzle == 0x02010101u) {
@@ -150,6 +166,24 @@ GpuImage* image_of(uint64_t guest) {
         uint32_t bw = 1, bh = 1, bytes = 4;
         format_block(t->format, bw, bh, bytes);
         compressed = bw > 1 || bh > 1;
+        // NX_ASTC_BC7 (nvn_astc_bc7.h): BC7 instead of RGBA8 when the cache holds an accepted conversion of exactly
+        // these bytes (the key the upload computes: block height, tiled size, hash). Block-linear 2D and 2D array
+        // colour textures only, not render targets, not given CPU texel writes: anything else stays RGBA8.
+        if (astc_bc7_on() && astc_decoded(t->format) && !t->stride && t->memory && t->readable && aspect == 0 &&
+            (t->target == 1 || t->target == 4) && !(t->flags & 0x8) && !t->has_writes.load(std::memory_order_acquire)) {
+            const uint64_t h0 = plat::monotonic_ns();
+            const uint32_t bh0 = upload_block_height(*t, img->width, img->height, img->layers, img->levels);
+            const uint64_t tiled =
+                block_linear_layout(img->width, img->height, img->layers, img->levels, bw, bh, bytes, bh0).tiled_size;
+            const uint64_t hash = texture_hash(reinterpret_cast<const uint8_t*>(t->memory), std::min(t->readable, tiled));
+            const Bc7Key k{hash, tiled, t->format, img->width, img->height, img->layers, img->levels, bh0};
+            const bool bc7 = astc_bc7_lookup(k) == Bc7Decision::kBc7;
+            if (bc7) {
+                img->format = t->format >= 0x87 ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+                img->astc_bc7 = true, img->bc7_hash = hash, img->bc7_tiled = tiled, img->bc7_bh0 = bh0;
+            }
+            astc_bc7_note_image(bc7, plat::monotonic_ns() - h0);
+        }
     }
     VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     // 3D textures are rendered one slice at a time (a colour-grading LUT): 2D views of a slice need this flag
@@ -193,6 +227,11 @@ GpuImage* image_of(uint64_t guest) {
         if (img->storage) ci.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     }
     ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (img->astc_bc7 && !image_supported(ci, t->format)) {  // NX_ASTC_BC7: checked at start; RGBA8 if this one cannot
+        astc_bc7_note_problem("image");
+        img->astc_bc7 = false;
+        img->format = ci.format = vk_format(t->format);
+    }
     if (!image_supported(ci, t->format)) return nullptr;
     if (!check(p_vkCreateImage(vk_device(), &ci, nullptr, &img->image), "vkCreateImage")) return nullptr;
     VkMemoryRequirements req{};
@@ -227,6 +266,17 @@ GpuImage* image_of(uint64_t guest) {
     return img.get();
 }
 
+void for_each_live_image(const std::function<void(const std::shared_ptr<GpuImage>&)>& fn) {
+    for (auto it = g_live_images.begin(); it != g_live_images.end();) {
+        if (auto img = it->second.lock()) {
+            fn(img);
+            ++it;
+        } else {
+            it = g_live_images.erase(it);  // its textures are gone
+        }
+    }
+}
+
 // Before a transfer write (upload copy, clear) into an image: the transition to TRANSFER_DST_OPTIMAL, or, when it is
 // already there (an earlier copy or clear in this command buffer), a barrier between the two writes. transition()
 // does nothing for the same layout, and two copies of a texture without one may run in either order: the synchronization
@@ -245,6 +295,7 @@ void transfer_write_barrier(VkCommandBuffer cb, GpuImage& img) {
 }
 
 void transition(VkCommandBuffer cb, GpuImage& img, VkImageLayout to) {
+    img.touched = g_frame.load(std::memory_order_relaxed);  // NX_RELEASE_REPLACED: every use passes here
     if (img.layout == to) return;
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     b.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
@@ -257,6 +308,19 @@ void transition(VkCommandBuffer cb, GpuImage& img, VkImageLayout to) {
     p_vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0,
                            nullptr, 1, &b);
     img.layout = to;
+}
+
+GpuImage* image_remake_rgba8(uint64_t texture, const char* why) {
+    Texture* t = get<Texture>(texture);
+    if (!t) return nullptr;
+    if (t->image && t->image->astc_bc7 && !t->image->bc7_demoted) {
+        GpuImage& old = *t->image;
+        astc_bc7_demote(Bc7Key{old.bc7_hash, old.bc7_tiled, old.nvn_format, old.width, old.height, old.layers,
+                               old.levels, old.bc7_bh0},
+                        why);
+        old.bc7_demoted = true;  // every texture sharing it makes it again at its next image_of
+    }
+    return image_of(texture);
 }
 
 }  // namespace nx::nvn

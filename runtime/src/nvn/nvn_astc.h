@@ -9,6 +9,10 @@
 
 namespace nx::nvn {
 
+// Bumped whenever the decoder's output can change: NX_ASTC_BC7's cache (nvn_astc_bc7.cpp) judges its conversions
+// against this decode, so the version is part of that cache's file names (tests/astc_test.cpp checks a digest).
+constexpr uint32_t kAstcDecoderVersion = 1;
+
 // One 16-byte block of bw x bh texels (4..12) into bw * bh RGBA8 texels, rows of bw. `srgb` selects the sRGB decode
 // mode (endpoints expanded as e << 8 | 0x80). Blocks that are invalid or HDR decode to the error colour, magenta.
 // Returns false for those.

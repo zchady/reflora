@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "nvn_astc.h"
+#include "nvn_astc_bc7.h"
 #include "nvn_astc_cache.h"
 #include "nvn_pipeline.h"
 #include "nvn_tiling.h"
@@ -154,10 +155,75 @@ uint32_t array_block_height(uint32_t bh0, uint64_t gap, uint32_t width, uint32_t
     return def;
 }
 
+uint32_t upload_block_height(uint32_t format, uint32_t bh0, bool packaged, uint64_t gap, uint32_t width, uint32_t height,
+                             uint32_t layers, uint32_t levels) {
+    uint32_t bw = 1, bh = 1, bytes = 4;
+    format_block(format, bw, bh, bytes);
+    if (packaged && layers > 1) bh0 = array_block_height(bh0, gap, width, height, layers, levels, bw, bh, bytes);
+    if (bh0 > 1 && layers == 1) bh0 = fitted_block_height(bh0, gap, width, height, layers, levels, bw, bh, bytes);
+    return bh0;
+}
+
+uint32_t upload_block_height(const Texture& t, uint32_t width, uint32_t height, uint32_t layers, uint32_t levels) {
+    if (t.stride) return t.block_height_gobs;
+    const bool packaged = t.packaged_layout != 0;
+    const bool needs_gap = (packaged && layers > 1) || (t.block_height_gobs > 1 && layers == 1);
+    return upload_block_height(t.format, t.block_height_gobs, packaged, needs_gap ? texture_gap(t) : 0, width, height,
+                               layers, levels);
+}
+
+bool upload_astc_bc7(VkCommandBuffer cb, const Texture& t, GpuImage& img) {
+    if (!img.astc_bc7 || !t.memory || !t.readable || t.stride) return false;
+    const uint64_t t0 = plat::monotonic_ns();
+    uint32_t bw = 1, bh = 1, bytes = 16;
+    format_block(t.format, bw, bh, bytes);
+    const uint32_t layers = img.layers;
+    // the bytes the conversion was chosen for (image_of), else nothing to upload: image_of makes the image again
+    const uint32_t bh0 = upload_block_height(t, img.width, img.height, layers, img.levels);
+    const uint64_t tiled = block_linear_layout(img.width, img.height, layers, img.levels, bw, bh, bytes, bh0).tiled_size;
+    const uint64_t hash = texture_hash(reinterpret_cast<const uint8_t*>(t.memory), std::min(t.readable, tiled));
+    if (hash != img.bc7_hash || tiled != img.bc7_tiled || bh0 != img.bc7_bh0) return false;
+    const Bc7Key k{hash, tiled, t.format, img.width, img.height, layers, img.levels, bh0};
+    std::vector<uint8_t> blocks;
+    std::vector<LinearLevel> levels;
+    const bool from_memory = astc_cache_take_bc7(t.memory, t.format, img.width, img.height, layers, img.levels, bh0,
+                                                 hash, blocks, levels);
+    if (!from_memory && !astc_bc7_load(k, blocks, levels)) return false;
+    if (levels.size() != img.levels) return false;
+    for (uint32_t i = 0; i < levels.size(); i++)
+        if (levels[i].width != std::max(1u, img.width >> i) || levels[i].height != std::max(1u, img.height >> i) ||
+            levels[i].offset + levels[i].layer_size * layers > blocks.size())
+            return false;
+    img.uploaded = true;
+    Upload u = blocks.size() >= (1u << 20) && staging_wanted(blocks.size()) ? staging_alloc(blocks.size())
+                                                                             : upload_alloc(blocks.size(), 16);
+    std::memcpy(u.ptr, blocks.data(), blocks.size());
+    std::vector<VkBufferImageCopy> copies;
+    for (uint32_t i = 0; i < levels.size(); i++) {
+        VkBufferImageCopy r{};
+        r.bufferOffset = u.offset + levels[i].offset;
+        r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, layers};
+        r.imageExtent = {levels[i].width, levels[i].height, 1};
+        copies.push_back(r);
+    }
+    transfer_write_barrier(cb, img);
+    p_vkCmdCopyBufferToImage(cb, u.buffer, img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, uint32_t(copies.size()),
+                             copies.data());
+    const uint64_t ns = plat::monotonic_ns() - t0;
+    note_host_work(ns);
+    astc_bc7_note_upload(from_memory, blocks.size(), ns);
+    return true;
+}
+
 void upload_texture(VkCommandBuffer cb, const Texture& t, GpuImage& img) {
+    if (img.astc_bc7) {  // NX_ASTC_BC7: ensure_contents uploads these first (and makes the image again if it cannot)
+        if (!upload_astc_bc7(cb, t, img)) img.uploaded = true, clear_image(cb, img);
+        return;
+    }
     img.uploaded = true;
     if (gpu_profile_on()) gpu_profile_mark(cb, "texture uploads");
     if (!t.memory || !t.readable) return;
+    if (evict_on()) vram_evict_note_upload(t, img);  // where it came from, to check before giving it back
     struct HostWork {  // untiling, decoding and the copy for the GPU: the console's GPU reads the texture in place
         uint64_t t0 = plat::monotonic_ns();
         ~HostWork() { note_host_work(plat::monotonic_ns() - t0); }
@@ -258,25 +324,26 @@ void upload_texture(VkCommandBuffer cb, const Texture& t, GpuImage& img) {
     // guess gives 8 or 16): with the guess, the mip chain runs past the next texture of the pool. The true one is the
     // largest that fits the gap to the next texture (exact for every ASTC 6x5 texture surveyed), so halve until it
     // fits; a guess that fits is kept. Single-layer textures only: that is what was checked (3,141 of them,
-    // tests/test_bntx_block_height.py). Packaged 2D arrays get 1 GOB already (nvn_objects.cpp).
-    uint32_t bh0 = t.block_height_gobs;
-    if (t.packaged_layout && !t.stride && layers > 1)
-        bh0 = array_block_height(bh0, texture_gap(t), img.width, img.height, layers, img.levels, bw, bh, bytes);
-    if (bh0 > 1 && !t.stride && layers == 1) {
-        const uint64_t gap = texture_gap(t);
-        uint32_t guess = bh0;
-        bh0 = fitted_block_height(guess, gap, img.width, img.height, layers, img.levels, bw, bh, bytes);
+    // tests/test_bntx_block_height.py). Packaged 2D arrays get 1 GOB already (nvn_objects.cpp). The same steps key the
+    // NX_ASTC_BC7 cache (upload_block_height).
+    const uint32_t bh0 = upload_block_height(t, img.width, img.height, layers, img.levels);
+    if (bh0 != t.block_height_gobs && layers == 1) {
         static int logged = 0;
-        if (bh0 != guess && logged++ < 20)
+        if (logged++ < 20)
             log("nvn/vk: texture %ux%u format %#x: block height %u -> %u GOBs to fit its %llu bytes", img.width,
-                img.height, t.format, guess, bh0, (unsigned long long)gap);
+                img.height, t.format, t.block_height_gobs, bh0, (unsigned long long)texture_gap(t));
     }
     // ASTC decoded in the background since the game made the texture (nvn_astc_cache.cpp): taken when it was
     // decoded from these very bytes.
     const bool astc = astc_decoded(t.format);
+    // NX_ASTC_BC7 (nvn_astc_bc7.cpp): an image made BC7 takes the cache's blocks; an RGBA8 upload of a texture with no
+    // verdict yet hands its decode to the converter, for the next session
+    const bool bc7_candidate = astc && astc_bc7_on() && (t.target == 1 || t.target == 4) &&
+                               img.aspect == VK_IMAGE_ASPECT_COLOR_BIT && !img.texels;
+    uint64_t hash = 0, tiled = 0;
     if (astc) {
-        uint64_t tiled = block_linear_layout(img.width, img.height, layers, img.levels, bw, bh, bytes, bh0).tiled_size;
-        uint64_t hash = texture_hash(reinterpret_cast<const uint8_t*>(t.memory), std::min(t.readable, tiled));
+        tiled = block_linear_layout(img.width, img.height, layers, img.levels, bw, bh, bytes, bh0).tiled_size;
+        hash = texture_hash(reinterpret_cast<const uint8_t*>(t.memory), std::min(t.readable, tiled));
         std::vector<LinearLevel> ready;
         if (astc_cache_take(t.memory, t.format, img.width, img.height, layers, img.levels, bh0, hash, linear, ready)) {
             Upload u = linear.size() >= (1u << 20) && staging_wanted(linear.size()) ? staging_alloc(linear.size())
@@ -292,6 +359,9 @@ void upload_texture(VkCommandBuffer cb, const Texture& t, GpuImage& img) {
             transfer_write_barrier(cb, img);
             p_vkCmdCopyBufferToImage(cb, u.buffer, img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                      uint32_t(copies.size()), copies.data());
+            if (bc7_candidate)
+                astc_bc7_enqueue(Bc7Key{hash, tiled, t.format, img.width, img.height, layers, img.levels, bh0},
+                                 std::move(linear), std::move(ready));
             return;
         }
     }
@@ -358,6 +428,9 @@ void upload_texture(VkCommandBuffer cb, const Texture& t, GpuImage& img) {
     transfer_write_barrier(cb, img);
     p_vkCmdCopyBufferToImage(cb, u.buffer, img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, uint32_t(copies.size()),
                              copies.data());
+    if (bc7_candidate && !widen)
+        astc_bc7_enqueue(Bc7Key{hash, tiled, t.format, img.width, img.height, layers, img.levels, bh0},
+                         std::move(linear), std::move(levels));
 }
 
 }  // namespace nx::nvn

@@ -12,6 +12,7 @@
 
 #include "../collect.h"
 #include "../hitch.h"
+#include "nvn_astc_bc7.h"
 #include "nvn_pipeline.h"
 #include "platform.h"
 
@@ -24,6 +25,12 @@ using namespace nx::vk;
 // and saturation (docs/nvn/DEBUG.md #29).
 VkFormat view_format(const GpuImage& img, uint32_t nvn) {
     if (VkFormat f; bc_view_format(img, nvn, f)) return f;  // decoded BC (nvn_bc.cpp)
+    if (img.astc_bc7) {  // NX_ASTC_BC7: a view as an ASTC format keeps its sRGB-ness; any other is not served as BC7
+        if (!nvn || nvn == img.nvn_format) return img.format;
+        if (is_astc(nvn)) return nvn >= 0x87 ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+        img.bc7_remake_why = "view";  // this use as it is; RGBA8 before the next one (ensure_contents)
+        return img.format;
+    }
     if (!nvn || nvn == img.nvn_format || img.alpha_from_r || img.aspect != VK_IMAGE_ASPECT_COLOR_BIT) return img.format;
     VkFormat f = vk_format(nvn);
     uint32_t bw = 1, bh = 1, bytes = 0, iw = 1, ih = 1, ibytes = 0;
@@ -467,6 +474,7 @@ void apply_texel_writes(VkCommandBuffer cb, Texture& t, GpuImage& img) {
         t.has_writes.store(false, std::memory_order_release);
     }
     if (writes.empty()) return;
+    if (img.astc_bc7) return astc_bc7_note_problem("texel writes after the check");  // ensure_contents demotes first
     img.texels = true;
     VkImageLayout back = img.layout;
     bool is3d = img.view_type == VK_IMAGE_VIEW_TYPE_3D;
@@ -497,7 +505,12 @@ uint64_t g_not_ready[6];  // why sampled_ready said no: no image, dirty, texel w
 
 bool sampled_ready(uint64_t texture) {
     Texture* t = get<Texture>(texture);
-    if (!t || !t->image) return g_not_ready[0]++, false;  // no image yet (missing textures are the caller's)
+    // no image yet (missing textures are the caller's), or one the VRAM eviction gave back (made again before the pass)
+    if (!t || !t->image || t->image->evicted) return g_not_ready[0]++, false;
+    if (t->image->superseded) return g_not_ready[0]++, false;  // NX_RELEASE_REPLACED: made again before the pass
+    // NX_ASTC_BC7: a BC7 image demoted through another texture, or one with a reason to be made RGBA8: made again (and
+    // uploaded) before the pass, not inside it
+    if (t->image->bc7_demoted || t->image->bc7_remake_why) return g_not_ready[0]++, false;
     check_linear_content(*t);
     if (t->dirty && !t->image->rendered) return g_not_ready[1]++, false;
     if (t->has_writes.load(std::memory_order_acquire)) return g_not_ready[2]++, false;  // no lock (nvn.h)
@@ -536,10 +549,21 @@ VkImageView attachment_view(GpuImage& img, uint32_t level, uint32_t layer, VkFor
     return v;
 }
 
+GpuImage* target_image(VkCommandBuffer cb, uint64_t texture) {
+    GpuImage* img = image_of(texture);
+    if (img && img->rebuilt && !img->uploaded) img = ensure_contents(cb, texture);
+    return img;
+}
+
 GpuImage* ensure_contents(VkCommandBuffer cb, uint64_t texture) {
     Texture* t = get<Texture>(texture);
     GpuImage* img = t ? image_of(texture) : nullptr;
     if (!img) return nullptr;
+    // NX_ASTC_BC7: CPU texel writes, or a view in a format BC7 cannot be seen as: the image is made again as RGBA8
+    if (img->astc_bc7 && (t->has_writes.load(std::memory_order_acquire) || img->bc7_remake_why)) {
+        img = image_remake_rgba8(texture, img->bc7_remake_why ? img->bc7_remake_why : "texel writes");
+        if (!img) return nullptr;
+    }
     bool dirty = t->dirty.exchange(false);
     static const bool reupload = std::getenv("NX_TEXELS_REUPLOAD") != nullptr;  // bisecting: the old way
     bool upload = !img->rendered && (!img->uploaded || (dirty && (!img->texels || reupload)));
@@ -555,7 +579,19 @@ GpuImage* ensure_contents(VkCommandBuffer cb, uint64_t texture) {
             upload = false;
         }
     }
-    if (upload) upload_texture(cb, *t, *img);
+    // NX_ASTC_BC7: the cache's blocks for exactly these bytes, else (other bytes, no readable conversion) the image is
+    // made again as RGBA8 and uploaded as before
+    if (upload && img->astc_bc7 && !upload_astc_bc7(cb, *t, *img)) {
+        img = image_remake_rgba8(texture, img->uploaded ? "bytes changed" : "no conversion to load");
+        if (!img) return nullptr;
+        upload = !img->rendered && !img->uploaded;
+    }
+    if (upload && img->astc_bc7) upload = false;  // uploaded just now
+    if (upload) {
+        const uint64_t t0 = img->rebuilt ? plat::monotonic_ns() : 0;
+        upload_texture(cb, *t, *img);
+        if (img->rebuilt) vram_evict_note_rebuild(*img, plat::monotonic_ns() - t0), img->rebuilt = false;
+    }
     apply_texel_writes(cb, *t, *img);
     if (img->layout == VK_IMAGE_LAYOUT_UNDEFINED) {  // never written: black, not garbage
         transition(cb, *img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);

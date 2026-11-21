@@ -45,6 +45,11 @@ export const backend = {
   /** File picker; -> false when cancelled. Rejects with "not_font" | "unreadable" */
   importButtonFont: (title, filterName) => invoke("import_button_font", { title, filterName }),
   removeButtonFont: () => invoke("remove_button_font"),
+  /** Experimental BC7 textures: { enabled, last: work\textures.json or null, can_prepare } */
+  texturesInfo: () => invoke("textures_info"),
+  setBc7Textures: (enabled) => invoke("set_bc7_textures", { enabled }),
+  /** The preparer's textures step alone; its events arrive as a preparation's. Rejects with an error code. */
+  prepareTextures: () => invoke("prepare_textures"),
 
   /** Every preparer event (see PrepEvent in src-tauri/src/preparer.rs). Returns the unsubscribe function. */
   onPreparerEvent(handler) {

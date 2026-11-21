@@ -621,16 +621,20 @@ uint32_t gather_textures(const std::vector<const ShaderInfo*>& shaders) {
         // A pool entry naming a texture that no longer exists samples the dummy, like no texture: it ended the
         // render pass at every draw (~1.4M times in a run, docs/nvn/DEBUG.md #34).
         if (HandleSlot* slot = handle_slot(handle)) {
-            if (slot->object) texture = slot->texture, slot->object->last_sampled = submit_ns;
+            if (slot->object) {
+                texture = slot->texture, slot->object->last_sampled = submit_ns;
+                if (GpuImage* img = slot->object->image.get()) img->last_used = submit_ns;  // NX_VRAM_EVICT's age
+            }
             r.sampler = slot->sampler, r.view = slot->view;
             VkSampler& vk = slot->vk_sampler[b->image.depth ? 1 : 0];  // the same for every draw: a cache key built
             if (!vk) vk = sampler_for(slot->sampler, b->image.depth);  // per binding otherwise (nvn_sampler.cpp)
             r.vk_sampler = vk;
         } else {
             lookup_handle(handle, texture, r.sampler, &r.view);
-            if (Texture* sampled = texture ? get<Texture>(texture) : nullptr)
+            if (Texture* sampled = texture ? get<Texture>(texture) : nullptr) {
                 sampled->last_sampled = submit_ns;
-            else
+                if (GpuImage* img = sampled->image.get()) img->last_used = submit_ns;
+            } else
                 texture = 0;
         }
         r.texture = texture;

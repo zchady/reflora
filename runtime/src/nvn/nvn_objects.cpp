@@ -323,28 +323,11 @@ void TextureInitialize(CPU& c) {  // NVNboolean (NVNtexture*, const NVNtextureBu
         std::lock_guard lk(objects_lock());
         pool_textures()[t.pool].insert(guest);
     }
-    // Packaged (BNTX) textures were tiled offline with a block height often one step below the default
-    // (docs/nvn/TILING.md). The layout the builder returns does not carry it (it reads 1 for every texture in
-    // Wonder), so it only says "packaged", and the block height is the fit that matches every BNTX texture in the
-    // game: the smallest power of two >= rows * 3 / 32, at most 16 GOBs.
+    // Packaged (BNTX) textures: the block height they were tiled with (packaged_block_height).
     uint64_t layout = driver(c, "nvnTextureBuilderGetPackagedTextureLayout", {builder});
     if (layout >= kModuleBase && layout < kKernelBase + kKernelSize) layout = ld<uint64_t>(layout);
     t.packaged_layout = layout;
-    if (layout) {
-        uint32_t bw = 1, bh = 1, bytes = 0;
-        format_block(t.format, bw, bh, bytes);
-        uint32_t rows = (t.height + bh - 1) / bh, h = 1;
-        while (h * 32 < rows * 3 && h < 16) h <<= 1;
-        // Switch 2 BNTX 2D arrays (NVN target 4, under the NVN 2 driver) are tiled with 1 GOB whatever their size:
-        // all 458 in romfs/Model (BC4, BC5, ASTC 4x4 and 6x5; 25, 33 and 105 layers), each layer's mip chain
-        // 512-byte aligned. With the guess (4 GOBs for the 128x128 material arrays) every layer was read from the
-        // wrong place and the ASTC 4x4 ones did not fit their memory: terrain, bushes and characters drew black.
-        // tests/test_bntx_block_height.py checks this on the files.
-        // Not the effect resources' arrays, which keep the default: the upload picks it by the room they have
-        // (array_block_height, nvn_upload.cpp).
-        if (gob_layout() == GobLayout::Nvn2 && t.target == 4 && t.depth > 1) h = 1;
-        t.block_height_gobs = h;
-    }
+    if (layout) t.block_height_gobs = packaged_block_height(t.format, t.height, t.target, t.depth);
 
     // Swizzle: single-channel textures are often read through it (a font atlas in R8 read as alpha = R); without
     // it Vulkan returns alpha 1 and the text shaders covered the screen.
@@ -771,6 +754,25 @@ bool texture_astc_source(uint64_t guest, AstcSource& s) {
     }
     s.tiled_size = block_linear_layout(s.width, s.height, s.layers, s.levels, bw, bh, bytes, s.bh0).tiled_size;
     return true;
+}
+
+// Packaged (BNTX) textures were tiled offline with a block height often one step below the default
+// (docs/nvn/TILING.md). The layout the builder returns does not carry it (it reads 1 for every texture in Wonder), so
+// it only says "packaged", and the block height is the fit that matches every BNTX texture in the game: the smallest
+// power of two >= rows * 3 / 32, at most 16 GOBs.
+// Switch 2 BNTX 2D arrays (NVN target 4, under the NVN 2 driver) are tiled with 1 GOB whatever their size: all 458 in
+// romfs/Model (BC4, BC5, ASTC 4x4 and 6x5; 25, 33 and 105 layers), each layer's mip chain 512-byte aligned. With the
+// guess (4 GOBs for the 128x128 material arrays) every layer was read from the wrong place and the ASTC 4x4 ones did
+// not fit their memory: terrain, bushes and characters drew black. tests/test_bntx_block_height.py checks this on the
+// files. Not the effect resources' arrays, which keep the default: the upload picks it by the room they have
+// (array_block_height, nvn_upload.cpp).
+uint32_t packaged_block_height(uint32_t format, uint32_t height, uint32_t target, uint32_t depth) {
+    uint32_t bw = 1, bh = 1, bytes = 0;
+    format_block(format, bw, bh, bytes);
+    uint32_t rows = (height + bh - 1) / bh, h = 1;
+    while (h * 32 < rows * 3 && h < 16) h <<= 1;
+    if (gob_layout() == GobLayout::Nvn2 && target == 4 && depth > 1) h = 1;
+    return h;
 }
 
 uint64_t texture_gap(const Texture& t) {

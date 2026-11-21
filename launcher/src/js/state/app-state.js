@@ -16,6 +16,8 @@ export const store = createStore({
   saves: null, // SavesInfo
   avatars: [], // [{ id, data_url }] the user's own icons
   buttonFont: null, // { installed, kind, size }: the console's button-icon font
+  textures: null, // experimental BC7 textures: { enabled, last, can_prepare } (textures_info)
+  texturesRun: null, // the texture preparation started in Settings: { active, percent, count, message, outcome }
   prep: initialPreparation(),
   verification: { status: "idle", warnings: [], error: null }, // idle | checking | ok | needs_user | failed
   actionError: null, // the last refused action (start, choose...), translated
@@ -203,8 +205,66 @@ export async function startPreparation() {
 export const stopPreparation = () => backend.stopPreparation();
 export const openPreparationLog = () => backend.openPreparationLog().catch(() => {});
 
+// ---- experimental BC7 textures (NX_ASTC_BC7, off by default)
+
+export async function refreshTextures() {
+  try {
+    const textures = await backend.texturesInfo();
+    store.update((s) => ({ ...s, textures }));
+  } catch {
+    /* outside the app */
+  }
+}
+
+export async function setBc7Textures(enabled) {
+  try {
+    await backend.setBc7Textures(enabled);
+  } finally {
+    await refreshTextures();
+  }
+}
+
+/** Returns an error message, or "" when the texture preparation started. */
+export async function prepareTextures() {
+  // set before the call: its first events may arrive before the call returns
+  store.update((s) => ({ ...s, texturesRun: { active: true, percent: 0, count: null, message: "", outcome: null } }));
+  try {
+    await backend.prepareTextures();
+    return "";
+  } catch (e) {
+    store.update((s) => ({ ...s, texturesRun: null }));
+    return errorText(e);
+  }
+}
+
+function applyTexturesEvent(run, ev) {
+  switch (ev.type) {
+    case "progress":
+      return { ...run, percent: ev.percent };
+    case "count":
+      return { ...run, count: { done: ev.done, total: ev.total } };
+    case "warn":
+    case "error":
+      return { ...run, message: ev.text };
+    case "finished": {
+      const outcome = ev.stopped ? "stopped" : ev.exit_code === 0 ? "done" : "failed";
+      return { ...run, active: false, outcome };
+    }
+    default:
+      return run;
+  }
+}
+
 export function connectPreparer() {
   return backend.onPreparerEvent((ev) => {
+    if (store.get().texturesRun?.active) { // the texture preparation, not the installation's
+      store.update((s) => ({ ...s, texturesRun: applyTexturesEvent(s.texturesRun, ev) }));
+      if (ev.type === "finished") {
+        refreshTextures();
+        refreshInstallation();
+      }
+      return;
+    }
     store.update((s) => ({ ...s, prep: applyEvent(s.prep, ev) }));
     if (ev.type === "finished" || ev.type === "step") refreshInstallation();
   });
@@ -227,12 +287,14 @@ export async function playGame() {
 /** What every view shows: the phase, its texts and what the main button does. */
 export function derive(state) {
   const { install, prep } = state;
-  const percent = overallPercent(prep);
+  const textures = Boolean(state.texturesRun?.active); // the texture preparation started in Settings
+  const percent = textures ? Math.min(99, state.texturesRun.percent) : overallPercent(prep);
   const activeStep = prep.steps.find((s) => s.status === "active");
-  const activeLabel = activeStep ? T.steps[activeStep.name] : "";
+  // not a step of the installation (T.steps is the installation's step list): the Settings card's title
+  const activeLabel = textures ? T.settings.textures.title : activeStep ? T.steps[activeStep.name] : "";
 
   let phase;
-  if (prep.active) phase = "preparing";
+  if (prep.active || textures) phase = "preparing";
   else if (!install) phase = "loading";
   else phase = install.status.kind;
 
@@ -256,7 +318,7 @@ export function derive(state) {
   const detailKey = phase === "ready" && !optimized ? "readyNoGraphics" : phase;
   const detail = fmt(T.home.detail[detailKey] ?? "", { step: phase === "preparing" ? activeLabel : nextStep });
 
-  const statusLabel = prep.active ? `${T.status.preparing} · ${percent}%` : T.status[phase] ?? T.status.loading;
+  const statusLabel = phase === "preparing" ? `${T.status.preparing} · ${percent}%` : T.status[phase] ?? T.status.loading;
   const tone = { ready: "ready", running: "ready", preparing: "active", interrupted: "attention" }[phase] ?? "idle";
 
   // the three stages of the home journey

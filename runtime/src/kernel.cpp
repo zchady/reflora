@@ -196,7 +196,7 @@ static void unlock_mutex(uint64_t addr) {
 
 // ---- svc implementations --------------------------------------------------------------------------------------
 
-static uint32_t svc_arbitrate_lock(uint32_t owner, uint64_t addr, uint32_t tag) {
+uint32_t svc_arbitrate_lock(uint32_t owner, uint64_t addr, uint32_t tag) {
     std::unique_lock lk(g_k);
     KThread* self = t_self;
     if (load32(addr) != (owner | kHandleWaitMask)) return 0;
@@ -208,16 +208,30 @@ static uint32_t svc_arbitrate_lock(uint32_t owner, uint64_t addr, uint32_t tag) 
     return self->wait_result;
 }
 
-static uint32_t svc_arbitrate_unlock(uint64_t addr) {
+uint32_t svc_arbitrate_unlock(uint64_t addr) {
     std::unique_lock lk(g_k);
     unlock_mutex(addr);
     return 0;
 }
 
-static uint32_t svc_wait_process_wide_key(uint64_t mutex, uint64_t key, uint32_t tag, int64_t timeout) {
+namespace kstate {
+bool g_cv_release_first = false;              // the order before the fix: kernel_selftest.cpp's comparison only
+void (*g_cv_after_release)() = nullptr;       // kernel_selftest.cpp: runs another thread right after the release
+}  // namespace kstate
+
+// svcWaitProcessWideKeyAtomic: queue on the condvar and give the mutex away, atomically for the kernel (g_k). The
+// condvar word is set BEFORE the mutex is released, as Horizon does: nn::os's InternalConditionVariable Signal
+// (Wonder's sdk+171590) reads it and skips svcSignalProcessWideKey when it is 0, and a thread that takes the mutex in
+// user space (a CAS, no svc) the moment it is released must find it set. Released first, a reader of Wonder's
+// world-map reader-writer lock took the lock in that gap, read 0, skipped the signal, and the writer slept for good
+// (runs route_probe11 and route_wwM: 0 readers, lock free, condvar word 1, writer still queued).
+uint32_t svc_wait_process_wide_key(uint64_t mutex, uint64_t key, uint32_t tag, int64_t timeout) {
     std::unique_lock lk(g_k);
     KThread* self = t_self;
-    unlock_mutex(mutex);
+    if (g_cv_release_first) {
+        unlock_mutex(mutex);
+        if (g_cv_after_release) g_cv_after_release();
+    }
     self->wake = false;
     self->wait_mutex = mutex;
     self->wait_key = key;
@@ -225,6 +239,10 @@ static uint32_t svc_wait_process_wide_key(uint64_t mutex, uint64_t key, uint32_t
     self->wait_result = 0;
     g_cv_waiters.push_back(self);
     store32(key, 1);
+    if (!g_cv_release_first) {
+        unlock_mutex(mutex);
+        if (g_cv_after_release) g_cv_after_release();
+    }
     if (block(lk, self, timeout)) return self->wait_result;
     // Timed out (not handed the mutex): leave the condvar, or the mutex queue a signal moved us to, and return
     // without the mutex. Like Horizon: the SDK re-locks it itself (TimedWait -> InternalCriticalSection::Enter);
@@ -236,7 +254,7 @@ static uint32_t svc_wait_process_wide_key(uint64_t mutex, uint64_t key, uint32_t
     return 0xEA01;
 }
 
-static uint32_t svc_signal_process_wide_key(uint64_t key, int32_t count) {
+uint32_t svc_signal_process_wide_key(uint64_t key, int32_t count) {
     std::unique_lock lk(g_k);
     int n = 0;
     for (size_t i = 0; i < g_cv_waiters.size() && (count <= 0 || n < count);) {

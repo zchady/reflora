@@ -131,9 +131,23 @@ VkImageView sampled_view(VkCommandBuffer cb, uint64_t texture, const ImageShape&
 // The image behind a texture with its contents in place (uploaded, CPU writes applied, never-written ones cleared);
 // null for an unknown texture. Records transfers: outside render passes.
 GpuImage* ensure_contents(VkCommandBuffer cb, uint64_t texture);
+// The image of a texture about to be rendered or cleared into (a pass begins, a transfer clear): image_of, except that
+// an image made again after the VRAM eviction (NX_VRAM_EVICT) gets its contents first, as the image it replaces had
+// them: a partial draw or clear must load them, not start from a cleared image. Records transfers: outside passes.
+GpuImage* target_image(VkCommandBuffer cb, uint64_t texture);
 // nvn_upload.cpp: the texture's pool memory untiled (or taken row by row, pitch-linear) into the image, every level
 // and layer; cleared instead when the copies would read past what was staged. Marks it uploaded.
 void upload_texture(VkCommandBuffer cb, const Texture& t, GpuImage& img);
+// NX_ASTC_BC7 (nvn_astc_bc7.h): an image made BC7 gets the cache's blocks for the texture's current bytes (from the
+// background decoder, else from disk). False, with nothing recorded, when it cannot: bytes other than the ones the
+// image was chosen for, or no readable conversion of them; the caller then makes the image again as RGBA8.
+bool upload_astc_bc7(VkCommandBuffer cb, const Texture& t, GpuImage& img);
+// The block height an upload untiles a block-linear texture with: the Texture's own, fitted to the room before the
+// next texture of its pool (packaged textures, see upload_texture). The second form is the same steps from the
+// texture's parameters and that room (`gap`), for the NX_ASTC_BC7 preparation that reads the game's files.
+uint32_t upload_block_height(const Texture& t, uint32_t width, uint32_t height, uint32_t layers, uint32_t levels);
+uint32_t upload_block_height(uint32_t format, uint32_t bh0, bool packaged, uint64_t gap, uint32_t width, uint32_t height,
+                             uint32_t layers, uint32_t levels);
 // Every level and layer to zero (colour; magenta with `magenta`), depth and stencil to 0. Leaves TRANSFER_DST.
 void clear_image(VkCommandBuffer cb, GpuImage& img, bool magenta = false);
 // A single level and layer of an image, for rendering to.

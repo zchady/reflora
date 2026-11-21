@@ -27,6 +27,7 @@
 
 #include "nvn.h"
 #include "nvn_astc.h"
+#include "nvn_astc_bc7.h"
 #include "nvn_astc_cache.h"
 #include "nvn_tiling.h"
 #include "nvn_vk.h"
@@ -51,6 +52,8 @@ struct Entry {
     uint64_t hash = 0, bytes = 0, queued_ns = 0;
     std::vector<uint8_t> rgba;
     std::vector<LinearLevel> levels;
+    std::vector<uint8_t> bc7;  // NX_ASTC_BC7: an accepted conversion's blocks, read from the cache instead of decoding
+    std::vector<LinearLevel> bc7_levels;
 };
 
 std::mutex g_lock;
@@ -119,18 +122,28 @@ void work(uint64_t guest) {
     const uint8_t* tiled = reinterpret_cast<const uint8_t*>(s.memory);
     uint64_t hash = texture_hash(tiled, std::min(s.readable, s.tiled_size));
     std::vector<uint8_t> linear;
-    auto levels = deswizzle_texture(tiled, s.readable, s.width, s.height, s.layers, s.levels, bw, bh, bytes, linear, s.bh0);
-    bool ok = !levels.empty();
-    if (ok) decode_astc(s.format, linear, levels, s.layers, bw, bh, false);
+    std::vector<LinearLevel> levels;
+    // NX_ASTC_BC7: an accepted conversion in the cache is all this texture needs (image_of makes it BC7); else decoded
+    std::vector<uint8_t> bc7;
+    std::vector<LinearLevel> bc7_levels;
+    const Bc7Key bk{hash, s.tiled_size, s.format, s.width, s.height, s.layers, s.levels, s.bh0};
+    bool ok = astc_bc7_on() && astc_bc7_lookup(bk) == Bc7Decision::kBc7 && astc_bc7_load(bk, bc7, bc7_levels);
+    if (!ok) {
+        levels = deswizzle_texture(tiled, s.readable, s.width, s.height, s.layers, s.levels, bw, bh, bytes, linear, s.bh0);
+        ok = !levels.empty();
+        if (ok) decode_astc(s.format, linear, levels, s.layers, bw, bh, false);
+    }
     // Written while it was read (a file still streaming in): not a decode of one state of the data.
     if (ok && texture_hash(tiled, std::min(s.readable, s.tiled_size)) != hash) ok = false, g_changed++;
     std::lock_guard lk(g_lock);
     e->hash = hash;
     e->state = ok ? kDone : kFailed;
     if (ok) {
-        e->bytes = linear.size();
+        e->bytes = linear.size() + bc7.size();
         e->rgba.swap(linear);
         e->levels.swap(levels);
+        e->bc7.swap(bc7);
+        e->bc7_levels.swap(bc7_levels);
         auto it = g_entries.find(key);
         if (it != g_entries.end() && it->second == e) g_bytes += e->bytes;
         g_decoded++;
@@ -192,7 +205,7 @@ bool astc_cache_take(uint64_t memory, uint32_t format, uint32_t width, uint32_t 
                 g_waits++, g_wait_ns += plat::monotonic_ns() - t0;
                 it = g_entries.find(key);
             }
-            if (it != g_entries.end() && it->second == e && e->state == kDone && e->hash == hash) {
+            if (it != g_entries.end() && it->second == e && e->state == kDone && e->hash == hash && !e->rgba.empty()) {
                 rgba.swap(e->rgba);
                 out_levels.swap(e->levels);
                 result = true;
@@ -212,6 +225,29 @@ bool astc_cache_take(uint64_t memory, uint32_t format, uint32_t width, uint32_t 
             (unsigned long long)g_hits.load(), (unsigned long long)g_waits.load(), double(g_wait_ns.load()) / 1e6,
             (unsigned long long)(g_misses + g_stale), (unsigned long long)g_stale.load(),
             (unsigned long long)g_decoded.load(), (unsigned long long)g_changed.load(), (unsigned long long)g_skipped.load());
+    return result;
+}
+
+bool astc_cache_take_bc7(uint64_t memory, uint32_t format, uint32_t width, uint32_t height, uint32_t layers,
+                         uint32_t levels, uint32_t bh0, uint64_t hash, std::vector<uint8_t>& blocks,
+                         std::vector<LinearLevel>& out_levels) {
+    if (!on()) return false;
+    Key key{memory, format, width, height, layers, levels, bh0};
+    std::unique_lock lk(g_lock);
+    auto it = g_entries.find(key);
+    if (it == g_entries.end()) return false;
+    std::shared_ptr<Entry> e = it->second;
+    if (e->state == kRunning) {  // being read: waiting is shorter than reading the file again
+        g_done_cv.wait_for(lk, std::chrono::milliseconds(200), [&] { return e->state != kRunning; });
+        it = g_entries.find(key);
+    }
+    bool result = false;
+    if (it != g_entries.end() && it->second == e && e->state == kDone && e->hash == hash && !e->bc7.empty()) {
+        blocks.swap(e->bc7);
+        out_levels.swap(e->bc7_levels);
+        result = true;
+    }
+    if (it != g_entries.end() && it->second == e && e->state != kRunning) drop_locked(it);
     return result;
 }
 

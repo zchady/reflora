@@ -12,6 +12,7 @@ const DEFAULT_NICKNAME = "Zagreus"; // runtime/src/svc_account.cpp kDefaultNickn
 export function mountSettings(root, {
   onLanguage, onSaveName, onRefreshSaves, onRefreshAvatars, onImportAvatar, onChooseAvatar, onRemoveAvatar,
   onRefreshButtonFont, onImportButtonFont, onRemoveButtonFont,
+  onRefreshTextures, onBc7Textures, onPrepareTextures, onStopTextures,
 }) {
   const s = T.settings;
 
@@ -117,6 +118,28 @@ export function mountSettings(root, {
     fontError,
     h("div.actions.compact", importFont, removeFont));
 
+  // ---- experimental BC7 textures (NX_ASTC_BC7): the choice, and the cache prepared from the player's own package
+  const x = s.textures;
+  const bc7Buttons = [false, true].map((on) => h("button.choice", {
+    type: "button", "data-on": String(on), on: { click: () => onBc7Textures(on) },
+  }, on ? x.on : x.off));
+  const bc7Mode = h("p.verify-line", { role: "status" }); // what the game starts with: On or Off, in words
+  const texState = h("p.verify-line");
+  const texError = h("p.form-status", { role: "status", "data-ok": "false" });
+  const prepareTex = h("button.button.primary", {
+    type: "button", on: { click: async () => setText(texError, await onPrepareTextures()) },
+  }, icon("refresh"), x.prepare);
+  const stopTex = h("button.button", { type: "button", on: { click: () => onStopTextures() } }, icon("close"), x.stop);
+  const texCard = h("section.card",
+    h("div.card-head", cardTitle("sparkle", x.title)),
+    h("p.hint.first", x.help),
+    h("div.choices", { role: "group", "aria-label": x.title }, bc7Buttons),
+    bc7Mode,
+    texState,
+    texError,
+    h("div.actions.compact", prepareTex, stopTex),
+    h("p.hint", x.note));
+
   root.append(h("section.page.inner", { "aria-label": T.nav.settings },
     h("header.page-head",
       h("div",
@@ -124,11 +147,12 @@ export function mountSettings(root, {
         h("h1", s.title),
         h("p.lead", s.lead))),
     h("div.page-body",
-      h("div.settings-grid", h("div.settings-col", langCard, nameCard), h("div.settings-col", savesCard, fontCard)))));
+      h("div.settings-grid", h("div.settings-col", langCard, nameCard), h("div.settings-col", savesCard, fontCard, texCard)))));
 
   onRefreshSaves();
   onRefreshAvatars();
   onRefreshButtonFont();
+  onRefreshTextures();
   let fontInstalled = null;
   let filledName = null;
   let filesKey = "";
@@ -160,6 +184,51 @@ export function mountSettings(root, {
         importFont.replaceChildren(icon(installed ? "refresh" : "download"), installed ? b.replace : b.import);
       }
       removeFont.hidden = !installed;
+
+      const tx = state.textures;
+      const run = state.texturesRun;
+      const enabled = Boolean(tx?.enabled);
+      for (const b of bc7Buttons) {
+        setAttr(b, "aria-pressed", String(b.dataset.on === String(enabled)));
+        // On only with the textures prepared (Off always): turning it on means using the prepared cache
+        b.disabled = b.dataset.on === "true" && !enabled && !tx?.ready;
+      }
+      const gameOpen = state.install?.status.kind === "running";
+      setAttr(bc7Mode, "data-status", tx ? (enabled ? "ok" : null) : null);
+      setText(bc7Mode, !tx ? "" : [enabled ? x.onState : x.offState,
+        !enabled && !tx.ready ? x.needsTextures : "", gameOpen ? x.nextStart : ""].filter(Boolean).join(" "));
+      const last = tx?.last;
+      let texLine = "";
+      let texStatus = null;
+      if (run?.active) {
+        texStatus = "checking";
+        texLine = run.count ? fmt(x.running, { done: run.count.done, total: run.count.total, percent: run.percent })
+          : x.starting;
+      } else if (!tx) {
+        texLine = "";
+      } else if (last?.status === "ok" && !tx.ready && tx.can_prepare) {
+        texStatus = "needs_user"; // prepared for an earlier build of the game
+        texLine = x.stale;
+      } else if (last?.status === "ok") {
+        texStatus = "ok";
+        texLine = fmt(x.ready, {
+          date: last.finished ?? "?",
+          size: ((last.cache_bytes ?? 0) / 2 ** 30).toLocaleString(state.lang || undefined, { maximumFractionDigits: 1 }),
+        });
+      } else if (last) {
+        texStatus = "failed";
+        texLine = fmt(x.incomplete, { reason: last.reason ?? last.status ?? "?" });
+      } else {
+        texStatus = "needs_user";
+        texLine = tx.can_prepare ? x.none : x.notInstalled;
+      }
+      setAttr(texState, "data-status", texStatus);
+      setText(texState, texLine);
+      if (run?.active) setText(texError, "");
+      else if (run?.outcome === "failed" && run.message) setText(texError, run.message);
+      prepareTex.disabled = Boolean(run?.active) || !tx?.can_prepare;
+      prepareTex.hidden = Boolean(tx?.ready) && !run?.active; // done for this game: nothing to prepare again
+      stopTex.hidden = !run?.active;
 
       const sv = state.saves;
       setText(savesPath, sv?.path ?? "…");

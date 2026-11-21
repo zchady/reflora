@@ -190,6 +190,8 @@ struct Texture;
 // Bytes from a texture's storage to the next texture's in the same pool (or to the end of what it can read): how
 // much data a packaged (BNTX) texture really has, since a BNTX lays its textures out back to back (nvn_objects.cpp).
 uint64_t texture_gap(const Texture& t);
+// The block height a packaged (BNTX) texture was tiled with (nvn_objects.cpp; the builder does not return it).
+uint32_t packaged_block_height(uint32_t format, uint32_t height, uint32_t target, uint32_t depth);
 
 // GPU virtual addresses: every pool gets a range; address -> (pool, offset) for command translation.
 uint64_t gpu_alloc(uint64_t size);
@@ -383,11 +385,13 @@ struct PolygonInfo {
     uint32_t cull = 0, front = 0, mode = 0, offset_enables = 0;
 };
 // nvn_raster.cpp: an EQUAL colour pass after a depth pre-pass (tested, not written), drawn with a small depth bias
-// toward the camera (DEBUG.md #60). NX_EQUAL_SLACK=<units> (default 4, 0: off); the slope term is 1 per unit of it.
+// toward the camera. NX_EQUAL_SLACK=<units> (default 4, 0: off); the slope term (NX_EQUAL_SLACK_SLOPE
+// per unit) is 0 on Windows, 0.25 on Metal and Android.
 bool equal_slack_pass(const DepthStencilInfo& d);
 bool equal_slack_on();    // NX_EQUAL_SLACK not 0
 bool greater_slack_on();  // NX_GREATER_SLACK=1
 bool equal_slack_rule(const DepthStencilInfo& d, bool on, bool greater);  // nvn_pipeline_state.cpp
+bool game_bias_applies(const PolygonInfo& p);  // nvn_raster.cpp: SetPolygonOffsetClamp's values enabled for the mode
 
 struct TargetViews {  // SetRenderTargets' blob: level and layer per color target (0..7) and depth (8)
     uint8_t level[9] = {};
@@ -441,5 +445,7 @@ void format_block(uint32_t format, uint32_t& block_w, uint32_t& block_h, uint32_
 
 // Bytes a texture built from `builder` occupies in its pool (nvn_texture_layout.cpp).
 uint64_t texture_storage_size(CPU& c, uint64_t builder);
+// The same for a block-linear texture from its parameters (the NX_ASTC_BC7 preparation, which reads BNTX files).
+uint64_t texture_storage_size(uint32_t format, uint32_t width, uint32_t height, uint32_t depth, uint32_t levels);
 
 }  // namespace nx::nvn

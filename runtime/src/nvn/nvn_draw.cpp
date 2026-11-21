@@ -101,8 +101,11 @@ void set_dynamic(VkCommandBuffer cb, const VkViewport& vp, const VkRect2D& sc) {
     const State& s = g_state;
     uint32_t raster[10] = {s.stencil_ref[0],        s.stencil_ref[1],        s.stencil_compare_mask[0],
                           s.stencil_compare_mask[1], s.stencil_write_mask[0], s.stencil_write_mask[1]};
-    std::memcpy(raster + 6, &s.bias_factor, 4), std::memcpy(raster + 7, &s.bias_units, 4);
-    std::memcpy(raster + 8, &s.bias_clamp, 4);
+    // the bias values only while the game's offset is enabled (nvn_raster.cpp): turning it on or off sets them again
+    static const float none = 0.0f;
+    const bool game_bias = game_bias_applies(s.polygon);
+    std::memcpy(raster + 6, game_bias ? &s.bias_factor : &none, 4), std::memcpy(raster + 7, game_bias ? &s.bias_units : &none, 4);
+    std::memcpy(raster + 8, game_bias ? &s.bias_clamp : &none, 4);
     bool slack = s.depth.depth_test && equal_slack_pass(s.depth);
     raster[9] = slack;
     bool all = !b.has_dynamic;
@@ -128,7 +131,7 @@ void begin_rendering(VkCommandBuffer cb, const Targets& t) {
     VkFormat formats[8]{};  // the views' (render pass objects)
     for (uint32_t k = 0; k < t.color_count; k++) {
         colors[k].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        GpuImage* img = t.colors[k] ? image_of(t.colors[k]) : nullptr;
+        GpuImage* img = t.colors[k] ? target_image(cb, t.colors[k]) : nullptr;  // (NX_VRAM_EVICT: contents first)
         g_pass_images[k] = img;
         if (!img) continue;
         if (img->layout == VK_IMAGE_LAYOUT_UNDEFINED && !load_undefined) fresh |= 1u << k;
@@ -153,7 +156,7 @@ void begin_rendering(VkCommandBuffer cb, const Targets& t) {
         extent = {std::min(extent.width, std::max(1u, img->width >> level)),
                   std::min(extent.height, std::max(1u, img->height >> level))};
     }
-    GpuImage* dimg = t.depth ? image_of(t.depth) : nullptr;
+    GpuImage* dimg = t.depth ? target_image(cb, t.depth) : nullptr;
     g_pass_images[8] = dimg;
     if (dimg && dimg->aspect != VK_IMAGE_ASPECT_COLOR_BIT) {
         if (dimg->layout == VK_IMAGE_LAYOUT_UNDEFINED && !load_undefined) fresh |= 1u << 8;

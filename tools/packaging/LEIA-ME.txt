@@ -58,6 +58,31 @@ Saves
   ANTES de atualizar o REFLORA, mudar a pasta da instalação ou fazer qualquer manutenção, copie essa pasta para outro
   lugar. As configurações do jogo ficam em <pasta da instalação>\data\settings.ini (menu F1 dentro do jogo).
 
+Texturas BC7 (experimental, DESLIGADO por padrão)
+  Em placas sem ASTC (a maioria das NVIDIA e AMD de PC) o jogo guarda as texturas descomprimidas (RGBA8). Com as
+  texturas BC7 ligadas, elas ficam comprimidas em BC7, ocupando menos memória de vídeo. Recomendado para placas de
+  vídeo com até 8 GB de VRAM. Não resolve sozinho a falta de memória em placas de 8 GB: os quadros de renderização
+  continuam sendo a maior parte do uso. Para experimentar:
+  1. Prepare o jogo normalmente (Instalação) até "Pronto para jogar".
+  2. Em Configurações > "Texturas BC7 (experimental)", clique em "Preparar texturas". Ela lê as texturas do seu NUP e
+     grava o resultado só neste PC, em <pasta da instalação>\data\astc_bc7_cache: leva alguns minutos, conforme o
+     processador, usa bastante o processador e ocupa cerca de 3 GB. Pode parar quando quiser:
+     preparar de novo continua de onde parou.
+  3. Escolha "Ligado" (ele só fica disponível com as texturas preparadas). Logo abaixo, o cartão diz em que estado
+     o jogo vai abrir; a escolha vale a partir da próxima vez que o jogo abrir. Com as texturas prontas, o botão
+     "Preparar texturas" some: elas não são preparadas de novo. Ele só volta depois de uma atualização do REFLORA.
+  Cada textura só fica em BC7 se passar numa conferência de qualidade; as outras continuam como antes. Se notar algum
+  defeito na imagem, escolha "Desligado" (o jogo volta a ser exatamente como sem o recurso) e relate o problema.
+  Não compartilhe a pasta astc_bc7_cache: ela é gerada a partir dos arquivos do jogo.
+
+Novidades da Alpha 04 (em relação à Alpha 03)
+  - Petal Isles: a grama do mapa do mundo não aparece mais em blocos verdes através da areia (um ajuste de
+    profundidade levava valores que o jogo tinha deixado desligados).
+  - Corrigida uma condição de corrida no kernel emulado (variáveis de condição): uma thread podia perder o aviso para
+    acordar e dormir para sempre. Era uma causa de congelamento no mapa do mundo.
+  - Texturas BC7 experimentais, com preparação antecipada e cache no seu PC (acima). DESLIGADO por padrão.
+  - O catálogo de pipelines é o mesmo da Alpha 03 (2.687).
+
 Novidades da Alpha 03 (em relação à Alpha 02)
   - Placas de vídeo sem a extensão de "fragment shader interlock" agora criam os pipelines: os shaders não pedem mais
     o que não usam. O dispositivo Vulkan também liga os recursos do Vulkan 1.1/1.2 que a placa tiver.
@@ -76,7 +101,7 @@ Novidades da Alpha 02 (em relação à Alpha 01)
     cache do driver; numa placa mais lenta pode levar alguns minutos. Acontece uma vez por versão e por driver.
 
 Atualizar o REFLORA
-  Vindo da Alpha 01 ou 02: siga os passos abaixo. A atualização recompila o jogo com o runtime novo e refaz a Preparação
+  Vindo da Alpha 01, 02 ou 03: siga os passos abaixo. A atualização recompila o jogo com o runtime novo e refaz a Preparação
   gráfica com o catálogo novo; a extração, a recompilação e os shaders ficam como estão.
   1. Copie seus saves (acima).
   2. Extraia a nova versão numa pasta nova e abra o REFLORA.exe dela. Ele usa a mesma pasta de instalação.

@@ -66,6 +66,10 @@ if(NX_TESTS AND NOT ANDROID)
     add_executable(astc_test tests/astc_test.cpp runtime/src/nvn/nvn_astc.cpp)
     target_include_directories(astc_test PRIVATE runtime/src/nvn)
     add_test(NAME astc COMMAND astc_test --selftest)
+    add_executable(bc7_test tests/bc7_test.cpp runtime/src/nvn/nvn_bc7_encode.cpp runtime/src/nvn/nvn_bc.cpp)
+    target_compile_definitions(bc7_test PRIVATE NX_BC_STANDALONE)
+    target_include_directories(bc7_test PRIVATE runtime/src/nvn)
+    add_test(NAME bc7 COMMAND bc7_test --selftest)
     add_executable(nvn2_compute_test tests/nvn2_compute_test.cpp runtime/src/nvn/nvn_shaders.cpp
                    runtime/src/nvn/nvn_spirv_reflect.cpp)
     target_compile_definitions(nvn2_compute_test PRIVATE NX_SHADERS_STANDALONE)
@@ -145,6 +149,7 @@ set(NX_RUNTIME_SOURCES
     runtime/src/memory.cpp
     runtime/src/kernel.cpp
     runtime/src/kernel_watch.cpp
+    runtime/src/kernel_selftest.cpp
     runtime/src/timeline.cpp
     runtime/src/collect.cpp
     runtime/src/hitch.cpp
@@ -198,6 +203,7 @@ set(NX_RUNTIME_SOURCES
     runtime/src/nvn/nvn_gpu_pick.cpp
     runtime/src/nvn/nvn_image.cpp
     runtime/src/nvn/nvn_image_memory.cpp
+    runtime/src/nvn/nvn_supersede.cpp
     runtime/src/nvn/nvn_astc_cache.cpp
     runtime/src/nvn/nvn_frames.cpp
     runtime/src/nvn/nvn_dedup.cpp
@@ -218,6 +224,9 @@ set(NX_RUNTIME_SOURCES
     runtime/src/nvn/nvn_present.cpp
     runtime/src/nvn/nvn_pipeline_cache.cpp
     runtime/src/nvn/nvn_bc.cpp
+    runtime/src/nvn/nvn_astc_bc7.cpp
+    runtime/src/nvn/nvn_astc_bc7_prepare.cpp
+    runtime/src/nvn/nvn_bc7_encode.cpp
     runtime/src/nvn/nvn_draw.cpp
     runtime/src/nvn/nvn_sets.cpp
     runtime/src/nvn/nvn_clears.cpp

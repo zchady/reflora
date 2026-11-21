@@ -10,6 +10,7 @@
 #include <cstring>
 #include <map>
 
+#include "nvn_astc_bc7.h"
 #include "nvn_draw_state.h"
 
 namespace nx::nvn::replay {
@@ -129,6 +130,12 @@ void dedup_log() {
     if (g_copied + g_saved)
         log("nvn: uploads copied %.1f MB, reused %.1f MB", double(g_copied) / 1e6, double(g_saved) / 1e6);
     g_copied = g_saved = 0;
+    vram_log();  // every 30 s at most (nvn_vk.cpp)
+    static uint64_t next_bc7 = 0;  // NX_ASTC_BC7 (nvn_astc_bc7.cpp): its counters every 60 s while it is on
+    if (nvn::astc_bc7_on() && plat::monotonic_ns() >= next_bc7) {
+        next_bc7 = plat::monotonic_ns() + 60'000'000'000ull;
+        nvn::astc_bc7_log();
+    }
 }
 
 }  // namespace nx::nvn::replay

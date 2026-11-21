@@ -87,6 +87,9 @@ struct Layout {
     uint64_t size = 0, alignment = 512;
 };
 
+Layout block_linear(const FormatInfo& f, uint32_t width, uint32_t height, uint32_t depth, uint32_t levels,
+                    uint32_t samples);
+
 Layout compute(CPU& c, uint64_t builder) {
     uint32_t format = uint32_t(driver(c, "nvnTextureBuilderGetFormat", {builder}));
     uint32_t width = std::max<uint32_t>(1, uint32_t(driver(c, "nvnTextureBuilderGetWidth", {builder})));
@@ -102,6 +105,12 @@ Layout compute(CPU& c, uint64_t builder) {
         l.alignment = 0x100;
         return l;
     }
+    return block_linear(f, width, height, depth, levels, samples);
+}
+
+Layout block_linear(const FormatInfo& f, uint32_t width, uint32_t height, uint32_t depth, uint32_t levels,
+                    uint32_t samples) {
+    Layout l;
     uint64_t layer = 0;
     uint32_t bh0 = block_height_gobs(div_up(height, f.block_h));
     for (uint32_t level = 0; level < levels; level++) {
@@ -126,6 +135,12 @@ void GetStorageClass(CPU& c) { c.x[0] = 0; }  // NVNstorageClass: only matters f
 }  // namespace
 
 uint64_t texture_storage_size(CPU& c, uint64_t builder) { return compute(c, builder).size; }
+
+uint64_t texture_storage_size(uint32_t format, uint32_t width, uint32_t height, uint32_t depth, uint32_t levels) {
+    return block_linear(format_info(format), std::max(1u, width), std::max(1u, height), std::max(1u, depth),
+                        std::max(1u, levels), 1)
+        .size;
+}
 
 void format_block(uint32_t format, uint32_t& block_w, uint32_t& block_h, uint32_t& bytes) {
     FormatInfo f = format_info(format);

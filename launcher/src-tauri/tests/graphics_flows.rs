@@ -236,7 +236,7 @@ fn real_graphics_flows() {
         let log = e.ws.join("nx.log");
         let _ = std::fs::remove_file(&log);
         let game = reflora_lib::game::GameProcess::default();
-        let pid = game.launch(&e.ws, Some("Tester")).unwrap();
+        let pid = game.launch(&e.ws, Some("Tester"), false).unwrap();
         std::thread::sleep(std::time::Duration::from_secs(25));
         let _ = std::process::Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).output();
         let text = std::fs::read_to_string(&log).unwrap_or_default();
